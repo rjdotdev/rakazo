@@ -2,46 +2,56 @@ import { describe, expect, it } from "vitest";
 import { activityNotificationsEnabled, activityPreview } from "./runs.js";
 
 describe("run activity copy", () => {
-  it.each([
-    [
-      "request",
-      "Maya",
-      "Please check the release workflow.",
-      "Maya asked: Please check the release workflow.",
-      "request",
-    ],
-    ["result", "Maya", "Ready", "Update from Maya: Ready", "update"],
-    ["status", "Maya", "Ready", "Update from Maya: Ready", "update"],
-    ["fyi", "Maya", "Ready", "Update from Maya: Ready", "update"],
-    ["request", "  ", " first\n second ", "Another agent asked: first second", "request"],
-    ["result", "  ", " first\n second ", "Update from Another agent: first second", "update"],
-    ["request", " Maya ", " \n ", "Maya asked", "request"],
-    ["result", " Maya ", "", "Update from Maya", "update"],
-    ["request", "", "", "Another agent asked", "request"],
-    ["result", "", "", "Update from Another agent", "update"],
-  ])(
-    "preserves the legacy label for %s from '%s' with text '%s'",
-    (intent, fromBotName, text, legacy, kind) => {
+  it("presents structured agent messages instead of their internal wake prompt", () => {
+    expect(
+      activityPreview({
+        trigger: "bot_message",
+        prompt: "[bot] A message just arrived from another bot with internal routing data",
+        sourceBlocks: [
+          {
+            kind: "bot_message_received",
+            fromBotId: "maya",
+            fromBotName: "Maya",
+            text: "Please check the release workflow.",
+            intent: "request",
+          },
+        ],
+      }),
+    ).toEqual({
+      promptSnippet: "Maya asked: Please check the release workflow.",
+      agentMessage: {
+        fromBotName: "Maya",
+        kind: "request",
+        text: "Please check the release workflow.",
+      },
+    });
+  });
+
+  it.each(["result", "status", "fyi"])(
+    "preserves the legacy %s update snippet alongside message text",
+    (intent) => {
       expect(
         activityPreview({
           trigger: "bot_message",
-          prompt: "[bot] private internal routing envelope",
+          prompt: "internal",
           sourceBlocks: [
-            { kind: "bot_message_received", fromBotId: "peer", fromBotName, text, intent },
+            {
+              kind: "bot_message_received",
+              fromBotId: "peer",
+              fromBotName: "  ",
+              intent,
+              text: " first\n second ",
+            },
           ],
         }),
       ).toEqual({
-        promptSnippet: legacy,
-        agentMessage: {
-          fromBotName: fromBotName.trim(),
-          kind,
-          text: text.replace(/\s+/g, " ").trim(),
-        },
+        promptSnippet: "Update from Another agent: first second",
+        agentMessage: { fromBotName: "", kind: "update", text: "first second" },
       });
     },
   );
 
-  it("caps the whole legacy label and the structured text independently", () => {
+  it("preserves ordinary snippets and caps composed snippets and message text independently", () => {
     expect(activityPreview({ trigger: "user", prompt: " hello\n world " })).toEqual({
       promptSnippet: "hello world",
       agentMessage: null,
@@ -59,29 +69,41 @@ describe("run activity copy", () => {
         },
       ],
     });
-    expect(preview).toEqual({
-      promptSnippet: `Peer asked: ${"x".repeat(107)}…`,
-      agentMessage: { fromBotName: "Peer", kind: "request", text: `${"x".repeat(119)}…` },
-    });
-    expect(activityPreview({ trigger: "user", prompt: "x".repeat(130) }).promptSnippet).toBe(
-      `${"x".repeat(119)}…`,
-    );
+    expect(preview.promptSnippet).toBe(`Peer asked: ${"x".repeat(107)}…`);
+    expect(preview.agentMessage?.text).toBe(`${"x".repeat(119)}…`);
   });
 
   it.each([
-    undefined,
-    null,
-    [],
-    [{ kind: "invalid" }],
-    [{ kind: "text", text: "not a peer message" }],
-  ])("fails closed when an agent message has no valid structured source: %j", (sourceBlocks) => {
+    ["request", "Maya", "Maya asked"],
+    ["status", "Maya", "Update from Maya"],
+    ["request", " ", "Another agent asked"],
+  ])("preserves the legacy empty %s message label", (intent, fromBotName, label) => {
+    expect(
+      activityPreview({
+        trigger: "bot_message",
+        prompt: "internal",
+        sourceBlocks: [
+          { kind: "bot_message_received", fromBotId: "peer", fromBotName, intent, text: " \n " },
+        ],
+      }),
+    ).toEqual({
+      promptSnippet: label,
+      agentMessage: {
+        fromBotName: fromBotName.trim(),
+        kind: intent === "status" ? "update" : "request",
+        text: "",
+      },
+    });
+  });
+
+  it("fails closed when an agent message has no valid structured source", () => {
     expect(
       activityPreview({
         trigger: "bot_message",
         prompt: "[bot] private internal routing envelope",
-        sourceBlocks,
+        sourceBlocks: [{ kind: "text", text: "not a peer message" }],
       }),
-    ).toEqual({ promptSnippet: "Message from another agent", agentMessage: { kind: "unknown" } });
+    ).toEqual({ promptSnippet: "Message from another agent", agentMessage: null });
   });
 });
 
