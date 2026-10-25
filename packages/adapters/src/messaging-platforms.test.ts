@@ -9,6 +9,7 @@ import {
   messagingEnvFromProcess,
   messagingPlatformsFromEnv,
   parseSendblueStatus,
+  telegramApiBaseUrlFromEnv,
   telegramBotsFromEnv,
 } from "./messaging-platforms.js";
 
@@ -126,6 +127,80 @@ describe("messagingPlatformsFromEnv", () => {
       { name: "home2", botToken: "tg-home", webhookSecret: "home-secret" },
       { name: "work", botToken: "tg-work", webhookSecret: "work-secret" },
     ]);
+  });
+
+  it("points every Telegram bot at TELEGRAM_API_BASE_URL when set", async () => {
+    const platforms = messagingPlatformsFromEnv(
+      messagingEnvFromProcess({
+        TELEGRAM_BOT_TOKEN: "tg-token",
+        TELEGRAM_WEBHOOK_SECRET_TOKEN: "tg-webhook-secret",
+        TELEGRAM_BOT_TOKEN_WORK: "tg-work",
+        TELEGRAM_WEBHOOK_SECRET_TOKEN_WORK: "tg-work-secret",
+        TELEGRAM_API_BASE_URL: " http://telegram-bot-api:8081/ ",
+      }),
+    );
+    const urls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        urls.push(input);
+        return input.includes("/getFile")
+          ? Response.json({ ok: true, result: { file_id: "f1", file_path: "photos/a.jpg" } })
+          : new Response("image-bytes");
+      }),
+    );
+    try {
+      for (const platform of platforms) {
+        const adapter = platform.adapter as unknown as {
+          rehydrateAttachment(attachment: unknown): { fetchData(): Promise<Buffer> };
+        };
+        await adapter
+          .rehydrateAttachment({ type: "image", fetchMetadata: { fileId: "f1" } })
+          .fetchData();
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(urls).toEqual([
+      "http://telegram-bot-api:8081/bottg-token/getFile",
+      "http://telegram-bot-api:8081/file/bottg-token/photos/a.jpg",
+      "http://telegram-bot-api:8081/bottg-work/getFile",
+      "http://telegram-bot-api:8081/file/bottg-work/photos/a.jpg",
+    ]);
+  });
+
+  it("keeps Telegram on the cloud API without rereading process env", () => {
+    vi.stubEnv("TELEGRAM_API_BASE_URL", "http://unvalidated.example");
+    try {
+      const telegram = messagingPlatformsFromEnv({
+        telegramBotToken: "tg-token",
+        telegramWebhookSecret: "tg-webhook-secret",
+      })[0]!;
+      expect((telegram.adapter as unknown as { apiBaseUrl: string }).apiBaseUrl).toBe(
+        "https://api.telegram.org",
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("normalizes TELEGRAM_API_BASE_URL and rejects unsafe values", () => {
+    expect(telegramApiBaseUrlFromEnv(undefined)).toBeUndefined();
+    expect(telegramApiBaseUrlFromEnv("   ")).toBeUndefined();
+    expect(telegramApiBaseUrlFromEnv("http://localhost:8081")).toBe("http://localhost:8081");
+    expect(telegramApiBaseUrlFromEnv("https://tg.example.com/bot-api//")).toBe(
+      "https://tg.example.com/bot-api",
+    );
+    for (const value of [
+      "localhost:8081",
+      "not a url",
+      "ftp://tg.example.com",
+      "http://user:pass@tg.example.com",
+      "http://tg.example.com/?x=1",
+      "http://tg.example.com/#frag",
+    ]) {
+      expect(() => telegramApiBaseUrlFromEnv(value)).toThrow(/TELEGRAM_API_BASE_URL/);
+    }
   });
 
   it("skips a named Telegram bot that reuses the default or another bot's token", () => {

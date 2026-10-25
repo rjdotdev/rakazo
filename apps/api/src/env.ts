@@ -4,6 +4,7 @@ import {
   resolveDeploymentModel,
   resolveSandboxProvider,
   secretStoreOptionsFromEnv,
+  telegramApiBaseUrlFromEnv,
   telegramBotsFromEnv,
 } from "@rakazo/adapters";
 import type { OidcConfig } from "@rakazo/auth";
@@ -89,6 +90,8 @@ export interface AppEnv {
   telegramWebhookSecret: string | undefined;
   /** Extra named Telegram bots (TELEGRAM_BOT_TOKEN_<NAME>), e.g. one per space. */
   telegramBots?: TelegramBotCredentials[];
+  /** Self-hosted Bot API server shared by every Telegram bot. */
+  telegramApiBaseUrl: string | undefined;
   larkAppId: string | undefined;
   larkAppSecret: string | undefined;
   larkVerificationToken: string | undefined;
@@ -233,6 +236,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     telegramBotToken: optional(source.TELEGRAM_BOT_TOKEN),
     telegramWebhookSecret: optional(source.TELEGRAM_WEBHOOK_SECRET_TOKEN),
     telegramBots: telegramBotsFromEnv(source),
+    telegramApiBaseUrl: telegramApiBaseUrlFromEnv(source.TELEGRAM_API_BASE_URL),
     larkAppId: optional(source.LARK_APP_ID),
     larkAppSecret: optional(source.LARK_APP_SECRET),
     larkVerificationToken: optional(source.LARK_VERIFICATION_TOKEN),

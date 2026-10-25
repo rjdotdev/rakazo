@@ -28,6 +28,8 @@ export interface MessagingEnvironmentValues {
   telegramWebhookSecret?: string | undefined;
   /** Extra named Telegram bots (TELEGRAM_BOT_TOKEN_<NAME>), e.g. one per space. */
   telegramBots?: TelegramBotCredentials[] | undefined;
+  /** Self-hosted Bot API server (TELEGRAM_API_BASE_URL) shared by every Telegram bot. */
+  telegramApiBaseUrl?: string | undefined;
   larkAppId?: string | undefined;
   larkAppSecret?: string | undefined;
   larkVerificationToken?: string | undefined;
@@ -55,6 +57,7 @@ export function messagingEnvFromProcess(
     telegramBotToken: clean(env.TELEGRAM_BOT_TOKEN),
     telegramWebhookSecret: clean(env.TELEGRAM_WEBHOOK_SECRET_TOKEN),
     telegramBots: telegramBotsFromEnv(env),
+    telegramApiBaseUrl: telegramApiBaseUrlFromEnv(env.TELEGRAM_API_BASE_URL),
     larkAppId: clean(env.LARK_APP_ID),
     larkAppSecret: clean(env.LARK_APP_SECRET),
     larkVerificationToken: clean(env.LARK_VERIFICATION_TOKEN),
@@ -94,6 +97,34 @@ export function telegramBotsFromEnv(
   }
   bots.sort((a, b) => a.name.localeCompare(b.name));
   return bots;
+}
+
+const TELEGRAM_CLOUD_API = "https://api.telegram.org";
+
+/**
+ * TELEGRAM_API_BASE_URL points every Telegram bot at a self-hosted Bot API
+ * server (github.com/tdlib/telegram-bot-api) instead of api.telegram.org —
+ * typically one on the same host or Compose network, so plain http is
+ * allowed. Bot tokens are appended per request, so the URL is only an origin
+ * plus an optional path prefix. A malformed value fails startup rather than
+ * silently sending tokens somewhere unintended.
+ */
+export function telegramApiBaseUrlFromEnv(value: string | undefined): string | undefined {
+  const raw = value?.trim();
+  if (!raw) return undefined;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error("TELEGRAM_API_BASE_URL must be an http(s) URL, e.g. http://localhost:8081");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("TELEGRAM_API_BASE_URL must use http or https");
+  }
+  if (url.username || url.password || url.search || url.hash) {
+    throw new Error("TELEGRAM_API_BASE_URL must not include credentials, a query, or a fragment");
+  }
+  return `${url.origin}${url.pathname}`.replace(/\/+$/, "");
 }
 
 /**
@@ -194,6 +225,15 @@ export function messagingPlatformsFromEnv(
     });
   }
 
+  // Explicit base URL (cloud by default) so the adapter never falls back to
+  // rereading an unvalidated TELEGRAM_API_BASE_URL from process.env.
+  const telegramAdapter = (botToken: string, secretToken: string) =>
+    createTelegramAdapter({
+      botToken,
+      secretToken,
+      apiBaseUrl: env.telegramApiBaseUrl ?? TELEGRAM_CLOUD_API,
+      mode: options.pollInboundMessages ? "auto" : "webhook",
+    });
   const telegramTokens = new Set<string>();
   // Both required: without the secret token the adapter accepts unsigned
   // webhook posts, so a forged update could reach inbound processing.
@@ -213,11 +253,7 @@ export function messagingPlatformsFromEnv(
       // and Telegram allows only one live getUpdates connection per bot —
       // a second poller elsewhere would just steal that slot and drop
       // every message into the void.
-      adapter: createTelegramAdapter({
-        botToken: env.telegramBotToken,
-        secretToken: env.telegramWebhookSecret,
-        mode: options.pollInboundMessages ? "auto" : "webhook",
-      }),
+      adapter: telegramAdapter(env.telegramBotToken, env.telegramWebhookSecret),
     });
   }
 
@@ -236,11 +272,7 @@ export function messagingPlatformsFromEnv(
       provider: `telegram-${bot.name}`,
       adapterName: "telegram",
       capabilities: { direct: true, groups: false, receipt: null },
-      adapter: createTelegramAdapter({
-        botToken: bot.botToken,
-        secretToken: bot.webhookSecret,
-        mode: options.pollInboundMessages ? "auto" : "webhook",
-      }),
+      adapter: telegramAdapter(bot.botToken, bot.webhookSecret),
     });
   }
 

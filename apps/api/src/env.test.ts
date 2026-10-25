@@ -22,6 +22,17 @@ describe("loadEnv", () => {
     }
   });
 
+  it("reads an optional self-hosted Telegram Bot API server", () => {
+    expect(loadEnv(base).telegramApiBaseUrl).toBeUndefined();
+    expect(
+      loadEnv({ ...base, TELEGRAM_API_BASE_URL: " http://telegram-bot-api:8081/ " })
+        .telegramApiBaseUrl,
+    ).toBe("http://telegram-bot-api:8081");
+    expect(() => loadEnv({ ...base, TELEGRAM_API_BASE_URL: "telegram-bot-api:8081" })).toThrow(
+      /TELEGRAM_API_BASE_URL/,
+    );
+  });
+
   it("defaults uploads to 10 MiB and parses a configured limit", () => {
     expect(loadEnv(base).maxUploadSizeBytes).toBe(10 * 1024 * 1024);
     expect(loadEnv({ ...base, MAX_UPLOAD_SIZE_MB: "" }).maxUploadSizeBytes).toBe(10 * 1024 * 1024);
