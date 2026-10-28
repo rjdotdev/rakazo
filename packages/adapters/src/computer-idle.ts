@@ -269,9 +269,14 @@ export function scheduleComputerSleep(
 ): void {
   if (!computerId || !computerIdleSleepEnabled()) return;
   const at = Date.now() + sandboxIdleMs();
-  void jobs.enqueue(
-    computerSleepJob(computerId, new Date(notAfter ? Math.min(at, notAfter.getTime()) : at)),
-  );
+  jobs
+    .enqueue(
+      computerSleepJob(computerId, new Date(notAfter ? Math.min(at, notAfter.getTime()) : at)),
+    )
+    .catch((error) => {
+      // The idle sweeper queues a fresh check for every running computer.
+      getLogger().warn("computer.sleep_schedule_failed", { "computer.id": computerId, error });
+    });
 }
 
 function activeLimitReached(
@@ -310,9 +315,7 @@ export async function touchRunningComputer(
     activeLimitReached(deps.sandbox, toComputerRef(computer), computer.runningSince) &&
     !activeControl
   ) {
-    if (computerIdleSleepEnabled()) {
-      void deps.jobs.enqueue(computerSleepJob(computer.id, new Date(Date.now())));
-    }
+    scheduleComputerSleep(deps.jobs, computer.id, new Date(Date.now()));
     return;
   }
   scheduleComputerSleep(deps.jobs, computer.id);
