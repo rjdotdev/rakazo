@@ -89,9 +89,18 @@ The installer also downloads `rakazo` next to the Compose file. When something i
 ```
 
 It checks Docker, `.env`, the public address settings, computer egress, every container's
-health, the API's database login and free disk, then names each problem with the command or
-setting that fixes it. It changes nothing and never prints a secret. It exits nonzero when it
-finds an error, so monitoring can run it too; warnings alone exit zero.
+health, the API's database login and free disk, then asks before repairing what it can: it
+starts Docker or Rakazo, restarts an unhealthy service, generates a missing secret, makes `.env`
+private, sets `WEB_ORIGIN`, `BETTER_AUTH_URL`, `API_URL` and `RAKAZO_HOST` to the one public
+address, installs the [egress rules](#restricted-computer-egress), and removes unused images.
+It checks again after each round and does not repeat a repair that did not help.
+
+`./rakazo doctor --fix` repairs without asking. Run without a terminal and without `--fix`, as
+monitoring does, it only reports; it exits nonzero while an error remains.
+
+It never prints a secret, and never replaces `ENCRYPTION_KEY` or `POSTGRES_PASSWORD` once a
+database exists, because a new value cannot open the existing data. What needs your decision,
+such as TLS or two different public addresses, it reports for you to fix.
 
 ### Restricted networks / mirror downloads
 

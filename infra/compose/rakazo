@@ -1,23 +1,30 @@
 #!/usr/bin/env bash
 # Operator commands for a published-images install, kept next to docker-compose.images.yml.
-# `./rakazo doctor` reads Docker, .env and the running containers and says what to fix. It
-# changes nothing and never prints a secret from .env.
+# `./rakazo doctor` checks Docker, .env and the containers, then repairs what it safely can: in a
+# terminal after asking, with --fix without asking, and never when run unattended without --fix.
+# It never prints a secret from .env and never replaces one that existing data depends on.
 set -uo pipefail
 
 readonly COMPOSE_FILE="docker-compose.images.yml"
 readonly OVERRIDE_FILE="docker-compose.override.yml"
 readonly ENV_FILE=".env"
+readonly INSTALLER="install-images.sh"
+readonly EGRESS_SCRIPT="restrict-computer-egress.sh"
 readonly LOCAL_ORIGIN="http://127.0.0.1:5173"
 # Services that stay up. The others (migrate, data-init, computer) run once and exit.
 readonly LONG_RUNNING=" postgres supervisor api worker web "
+# The secrets install-images.sh generates. A new value for the last two cannot open existing data.
+readonly SECRETS="POSTGRES_APP_PASSWORD BETTER_AUTH_SECRET SCREEN_PROXY_SECRET SANDBOX_SUPERVISOR_TOKEN ENCRYPTION_KEY POSTGRES_PASSWORD"
 
-usage="Usage: ./rakazo doctor"
-case "${1:-}" in
+usage="Usage: ./rakazo doctor [--fix]"
+mode=report
+case "$*" in
   -h | --help | help)
     echo "$usage"
     exit 0
     ;;
-  doctor) [[ $# -eq 1 ]] || { echo "$usage" >&2; exit 2; } ;;
+  doctor) [[ ! -t 0 || ! -t 1 ]] || mode=ask ;;
+  "doctor --fix") mode=fix ;;
   *)
     echo "$usage" >&2
     exit 2
@@ -26,8 +33,9 @@ esac
 
 cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
 
-errors=0
-warnings=0
+compose=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
+[[ ! -f "$OVERRIDE_FILE" ]] || compose+=(-f "$OVERRIDE_FILE")
+
 error() {
   echo "Error: $*"
   errors=$((errors + 1))
@@ -36,51 +44,96 @@ warn() {
   echo "Warning: $*"
   warnings=$((warnings + 1))
 }
-
-compose=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
-start_command="docker compose -f $COMPOSE_FILE"
-if [[ -f "$OVERRIDE_FILE" ]]; then
-  compose+=(-f "$OVERRIDE_FILE")
-  start_command+=" -f $OVERRIDE_FILE"
-fi
-start_command+=" up -d"
-environment=""
-api_container=""
+# Records the repair for the problem just reported, as "function:argument". "up" (start or
+# recreate whatever stopped or changed) always runs last. Each repair runs at most once: a
+# problem one leaves behind is reported, not repaired again.
+fix() {
+  local entry
+  [[ "$tried" != *" $1 "* ]] || return 0
+  fixable=$((fixable + 1))
+  if [[ "$1" == up ]]; then
+    start_after_fixes=1
+    return
+  fi
+  for entry in ${fixes[@]+"${fixes[@]}"}; do [[ "$entry" != "$1" ]] || return 0; done
+  fixes+=("$1")
+}
 
 # The value Compose resolves for a setting: the shell first, then .env.
 setting() { sed -n "s/^$1=//p" <<<"$environment" | tail -n 1; }
 logs_hint() { echo "See why: docker logs --tail 50 $1"; }
+host_of() {
+  local host="${1#*://}"
+  host="${host%%/*}"
+  echo "${host%:*}"
+}
+# A DNS name, as opposed to an IP address or localhost.
+is_named() { [[ "$1" != localhost && "$1" != \[* && "$1" =~ [A-Za-z] ]]; }
+is_local() { [[ "$(host_of "$1")" =~ ^(localhost|127\.0\.0\.1|\[::1\])$ ]]; }
+has_env() { grep -Eq "^[[:space:]]*(export[[:space:]]+)?$1=[\"']?[^\"'[:space:]#]" "$ENV_FILE"; }
+# Unless Docker says otherwise, assume a database exists.
+has_database() {
+  local volumes
+  volumes="$(docker volume ls -q --filter label=com.docker.compose.volume=pgdata 2>/dev/null)" || return 0
+  [[ -n "$volumes" ]]
+}
 
 check_docker() {
   local api
-  command -v docker >/dev/null 2>&1 || { error "Docker is not installed."; return 1; }
-  docker compose version >/dev/null 2>&1 || { error "The Docker Compose plugin is not installed."; return 1; }
+  command -v docker >/dev/null 2>&1 || { error "Docker is not installed. See https://docs.docker.com/engine/install/"; return 1; }
+  docker compose version >/dev/null 2>&1 ||
+    { error "The Docker Compose plugin is not installed. See https://docs.docker.com/compose/install/"; return 1; }
   if ! api="$(docker version --format '{{.Server.APIVersion}}' 2>&1)"; then
-    case "$api" in
-      *"permission denied"*) error "This user cannot use Docker. Add it to the docker group (sudo usermod -aG docker \$USER), then sign in again." ;;
-      *) error "Docker is not running." ;;
-    esac
+    if [[ "$api" == *"permission denied"* ]]; then
+      error "This user cannot use Docker."
+      [[ "$(uname -s)" != Linux ]] || fix add_to_docker_group:
+    else
+      error "Docker is not running."
+      fix start_docker:
+    fi
     return 1
   fi
   # API 1.45 (Engine 26) is the first with the volume subpaths that bot homes mount.
   if [[ "$api" =~ ^1\.([0-9]+)$ ]] && ((BASH_REMATCH[1] < 45)); then
-    error "Docker Engine 26 or newer is required."
+    error "Docker Engine 26 or newer is required. See https://docs.docker.com/engine/install/"
   fi
 }
 
 check_config() {
-  local mode out missing line
+  local mode out name missing=0 messages
   [[ -f "$COMPOSE_FILE" ]] || { error "Keep this file next to $COMPOSE_FILE."; return 1; }
-  [[ -f "$ENV_FILE" ]] || { error "$ENV_FILE is missing. Run bash install-images.sh to create it."; return 1; }
+  if [[ ! -f "$ENV_FILE" ]]; then
+    if [[ -f "$INSTALLER" ]]; then
+      error "$ENV_FILE is missing."
+      fix run_installer:
+    else
+      error "$ENV_FILE is missing. Run bash $INSTALLER to create it."
+    fi
+    return 1
+  fi
   mode="$(ls -l "$ENV_FILE")"
-  [[ "${mode:4:6}" == "------" ]] || warn "Other users can read $ENV_FILE. Run: chmod 600 $ENV_FILE"
+  if [[ "${mode:4:6}" != "------" ]]; then
+    warn "Other users can read $ENV_FILE."
+    fix secure_env:
+  fi
+  for name in $SECRETS; do
+    has_env "$name" && continue
+    missing=1
+    if [[ "$name" == ENCRYPTION_KEY || "$name" == POSTGRES_PASSWORD ]] && has_database; then
+      error "$name is missing from $ENV_FILE. Restore it from a backup of $ENV_FILE: a new one cannot open the existing data."
+    else
+      error "$name is missing from $ENV_FILE."
+      fix "new_secret:$name"
+    fi
+  done
+  ((missing == 0)) || return 1
   if ! out="$("${compose[@]}" config --quiet 2>&1)"; then
     # Compose repeats a missing setting once per use; its message comes from the Compose file.
-    missing="$(sed -n 's/.*is missing a value: //p' <<<"$out" | sort -u)"
-    if [[ -z "$missing" ]]; then
+    messages="$(sed -n 's/.*is missing a value: //p' <<<"$out" | sort -u)"
+    if [[ -z "$messages" ]]; then
       error "$(head -n 1 <<<"$out")"
     else
-      while IFS= read -r line; do error "$line."; done <<<"$missing"
+      while IFS= read -r out; do error "$out."; done <<<"$messages"
     fi
     return 1
   fi
@@ -88,28 +141,53 @@ check_config() {
 }
 
 check_settings() {
-  local origin auth api host
+  local origin auth api value address="" conflict=0 host
   origin="$(setting WEB_ORIGIN)"
-  origin="${origin:-$LOCAL_ORIGIN}"
   auth="$(setting BETTER_AUTH_URL)"
-  auth="${auth:-$LOCAL_ORIGIN}"
   api="$(setting API_URL)"
-  api="${api:-$LOCAL_ORIGIN}"
-  if [[ "${auth%/}" != "${origin%/}" || "${api%/}" != "${origin%/}" ]]; then
-    warn "Set BETTER_AUTH_URL, WEB_ORIGIN and API_URL to the same address."
+  origin="${origin:-$LOCAL_ORIGIN}" auth="${auth:-$LOCAL_ORIGIN}" api="${api:-$LOCAL_ORIGIN}"
+  origin="${origin%/}" auth="${auth%/}" api="${api%/}"
+  # The address people open: the one public value among the three, if there is exactly one.
+  for value in "$origin" "$auth" "$api"; do
+    is_local "$value" && continue
+    [[ -z "$address" || "$address" == "$value" ]] || conflict=1
+    address="$value"
+  done
+  ((conflict == 0)) || address="$origin"
+  address="${address:-$origin}"
+  if [[ "$auth" != "$origin" || "$api" != "$origin" ]]; then
+    if ((conflict)); then
+      warn "BETTER_AUTH_URL, WEB_ORIGIN and API_URL name different addresses. Set all three to the one people open."
+    else
+      warn "BETTER_AUTH_URL, WEB_ORIGIN and API_URL differ."
+      fix "set_address:$address"
+    fi
   fi
-  host="${origin#*://}"
-  host="${host%%/*}"
-  host="${host%:*}"
+  host="$(host_of "$address")"
   # The web app only answers a named host it allowlists; IP addresses always pass.
-  if [[ "$host" != localhost && "$host" != \[* && "$host" =~ [A-Za-z] ]]; then
-    [[ "$(setting RAKAZO_HOST)" == "$host" ]] ||
-      error "Set RAKAZO_HOST=$host in $ENV_FILE, or the web app refuses requests for $host."
-    [[ "$origin" == https://* ]] || warn "WEB_ORIGIN is not https. Put TLS in front of Rakazo."
+  if is_named "$host"; then
+    if [[ "$(setting RAKAZO_HOST)" != "$host" ]]; then
+      error "RAKAZO_HOST is not $host, so the web app refuses requests for it."
+      ((conflict)) || fix "set_address:$address"
+    fi
+    [[ "$address" == https://* ]] || warn "$address is not https. Put TLS in front of Rakazo."
   fi
   if [[ "$(setting SANDBOX_PROVIDER)" =~ ^(docker)?$ && "$(setting SANDBOX_COMPUTER_EGRESS)" == open ]]; then
-    warn "Bot computers can reach this host, its LAN and cloud metadata. See Restricted computer egress in docs/self-host.md."
+    if egress_rules_supported; then
+      warn "Bot computers can reach this host, its LAN and cloud metadata."
+      fix restrict_egress:
+    else
+      warn "Bot computers can reach this host, its LAN and cloud metadata. See Restricted computer egress in docs/self-host.md."
+    fi
   fi
+}
+
+# As install-images.sh decides: Linux Docker Engine with iptables, not Docker Desktop or rootless.
+egress_rules_supported() {
+  local info
+  [[ "$(uname -s)" == Linux && -f "$EGRESS_SCRIPT" ]] && command -v iptables >/dev/null 2>&1 || return 1
+  info="$(docker info --format '{{.OperatingSystem}} {{json .SecurityOptions}}' 2>/dev/null)" || return 1
+  [[ "$info" != *"Docker Desktop"* && "$info" != *rootless* ]]
 }
 
 check_services() {
@@ -119,7 +197,8 @@ check_services() {
     return
   fi
   if [[ -z "$ids" ]]; then
-    error "Rakazo is not running. Start it: $start_command"
+    error "Rakazo is not running."
+    fix up
     return
   fi
   # shellcheck disable=SC2086 # one container ID per word
@@ -136,14 +215,21 @@ check_services() {
     fi
     row="$(grep "^$service " <<<"$rows" | head -n 1)"
     if [[ -z "$row" ]]; then
-      error "$service is missing. Start it: $start_command"
+      error "$service is missing."
+      fix up
       continue
     fi
     read -r _ name state health restarts _ <<<"$row"
     name="${name#/}"
     case "$state/$health" in
-      created/*) error "$service has not started." ;;
-      running/unhealthy) error "$service is unhealthy. $(logs_hint "$name")" ;;
+      created/*)
+        error "$service has not started."
+        fix up
+        ;;
+      running/unhealthy)
+        error "$service is unhealthy. $(logs_hint "$name")"
+        fix "restart_service:$service"
+        ;;
       running/starting)
         if ((restarts == 0)); then
           warn "$service is still starting."
@@ -153,12 +239,16 @@ check_services() {
         ;;
       restarting/*) error "$service keeps restarting. $(logs_hint "$name")" ;;
       # Each of these restarts on failure, so one that stays down was stopped.
-      *) error "$service is not running. Start it: $start_command" ;;
+      *)
+        error "$service is not running."
+        fix up
+        ;;
     esac
   done
   while read -r service name state _ _ code; do
-    [[ "$LONG_RUNNING" == *" $service "* || "$state" != exited || "$code" == 0 ]] ||
-      error "$service failed. $(logs_hint "${name#/}")"
+    [[ "$LONG_RUNNING" == *" $service "* || "$state" != exited || "$code" == 0 ]] && continue
+    error "$service failed. $(logs_hint "${name#/}")"
+    fix up
   done <<<"$rows"
 }
 
@@ -183,15 +273,123 @@ check_disk() {
   # Docker Desktop keeps it inside its VM, out of reach from here.
   [[ -n "$root" && -d "$root" ]] || return 0
   free_kb="$(df -Pk "$root" 2>/dev/null | awk 'NR == 2 { print $4 }')"
-  [[ "$free_kb" =~ ^[0-9]+$ ]] && ((free_kb < 5 * 1024 * 1024)) && warn "Docker has less than 5 GiB of free disk."
-  return 0
+  if [[ "$free_kb" =~ ^[0-9]+$ ]] && ((free_kb < 5 * 1024 * 1024)); then
+    warn "Docker has less than 5 GiB of free disk."
+    fix free_disk:
+  fi
 }
 
-if check_docker && check_config; then
+run_checks() {
+  errors=0 warnings=0 fixable=0 start_after_fixes=0
+  fixes=()
+  environment=""
+  api_container=""
+  check_docker || return 0
+  check_config || return 0
   check_settings
   check_services
   check_api
   check_disk
-fi
+}
+
+# Rewrites one .env setting in place of any earlier lines for it, keeping the file private.
+set_env() {
+  local temporary
+  temporary="$(mktemp "./$ENV_FILE.tmp.XXXXXX")" || return 1
+  grep -Ev "^[[:space:]]*(export[[:space:]]+)?$1=" "$ENV_FILE" >"$temporary"
+  if printf '%s=%s\n' "$1" "$2" >>"$temporary" && chmod 600 "$temporary" && mv -- "$temporary" "$ENV_FILE"; then
+    start_after_fixes=1
+  else
+    rm -f -- "$temporary"
+    return 1
+  fi
+}
+
+start_docker() {
+  local waited=0
+  echo "Starting Docker..."
+  if [[ "$(uname -s)" == Darwin ]]; then
+    open -a Docker
+  else
+    sudo systemctl start docker 2>/dev/null || sudo service docker start
+  fi || return
+  until docker info >/dev/null 2>&1 || ((waited >= 30)); do
+    sleep 2
+    waited=$((waited + 2))
+  done
+}
+
+add_to_docker_group() {
+  local user="${USER:-$(id -un)}"
+  sudo usermod -aG docker "$user" || return
+  echo "Added $user to the docker group. Sign out and back in, then run ./rakazo doctor again."
+  exit 1
+}
+
+# The installer creates .env with fresh secrets, then pulls and starts everything.
+run_installer() { bash "$INSTALLER" --local; }
+
+secure_env() { chmod 600 "$ENV_FILE" && echo "Made $ENV_FILE readable only by you."; }
+
+new_secret() {
+  # The installer's sizes: 16 random bytes for database passwords, 32 for the rest.
+  local bytes=32
+  [[ "$1" != POSTGRES_* ]] || bytes=16
+  set_env "$1" "$(head -c "$bytes" /dev/urandom | od -An -tx1 | tr -d ' \n')" && echo "Generated $1 in $ENV_FILE."
+}
+
+set_address() {
+  local host
+  host="$(host_of "$1")"
+  set_env WEB_ORIGIN "$1" && set_env BETTER_AUTH_URL "$1" && set_env API_URL "$1" || return
+  if is_named "$host"; then
+    set_env RAKAZO_HOST "$host" || return
+  fi
+  echo "Set Rakazo's address in $ENV_FILE to $1."
+}
+
+restrict_egress() {
+  echo "Installing the computer egress firewall rules..."
+  sudo bash "./$EGRESS_SCRIPT" && set_env SANDBOX_COMPUTER_EGRESS restricted
+}
+
+free_disk() {
+  docker image prune -f >/dev/null && docker builder prune -f >/dev/null &&
+    echo "Removed unused Docker images and build cache."
+}
+
+restart_service() { "${compose[@]}" restart "$1" >/dev/null 2>&1 && echo "Restarted $1."; }
+
+apply_fixes() {
+  local entry
+  for entry in ${fixes[@]+"${fixes[@]}"}; do
+    tried+="$entry "
+    # shellcheck disable=SC2086 # an empty argument passes nothing
+    "${entry%%:*}" ${entry#*:}
+  done
+  if ((start_after_fixes)); then
+    tried+="up "
+    echo "Starting Rakazo..."
+    # Older Compose lacks --wait-timeout; plain `up -d` still starts everything.
+    "${compose[@]}" up -d --wait --wait-timeout 300 >/dev/null 2>&1 || "${compose[@]}" up -d >/dev/null 2>&1
+  fi
+}
+
+# Check, repair, and check again until nothing new can be fixed.
+tried=" "
+for round in 1 2 3 4; do
+  run_checks
+  ((fixable > 0 && round < 4)) || break
+  if [[ "$mode" == report ]]; then
+    echo "Run ./rakazo doctor --fix to fix $fixable of these."
+    break
+  fi
+  if [[ "$mode" == ask ]]; then
+    printf 'Fix %s of these? [Y/n] ' "$fixable"
+    read -r answer || break
+    [[ ! "$answer" =~ ^[Nn] ]] || break
+  fi
+  apply_fixes
+done
 ((errors + warnings > 0)) || echo "No problems found."
 ((errors == 0))

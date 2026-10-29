@@ -263,7 +263,7 @@ no_cli_out="$(run_install "$tmp/offline" --offline 2>&1)"
 no_cli_code=$?
 unset STUB_UP_FAIL
 set -e
-[[ "$failed_code" -ne 0 && "$failed_out" == *"Run ./rakazo doctor to see why."* ]] ||
+[[ "$failed_code" -ne 0 && "$failed_out" == *"Run ./rakazo doctor to fix them."* ]] ||
   fail "a failed start did not name the doctor: $failed_out"
 [[ "$no_cli_code" -ne 0 && "$no_cli_out" != *"rakazo doctor"* ]] ||
   fail "a failed start named a doctor that is not there: $no_cli_out"

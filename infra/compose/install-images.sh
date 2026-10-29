@@ -374,7 +374,7 @@ configure_computer_egress() {
 for filename in "${required_files[@]}"; do
   download "$filename"
 done
-# Optional: ./rakazo doctor checks this install. Setup goes on without it.
+# Optional: ./rakazo doctor checks and repairs this install. Setup goes on without it.
 if (trap cleanup EXIT; download "$CLI") 2>/dev/null; then
   chmod u+x "$CLI"
 fi
@@ -413,7 +413,7 @@ else
   fi
 fi
 start_failed() {
-  [[ ! -x "$CLI" ]] || fail "services did not start. Run ./${CLI} doctor to see why."
+  [[ ! -x "$CLI" ]] || fail "services did not start. Run ./${CLI} doctor to fix them."
   exit 1
 }
 # `--wait` without `--wait-timeout` can hang on one-shot services (Compose < 2.7)
