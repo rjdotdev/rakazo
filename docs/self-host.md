@@ -12,21 +12,26 @@ Compose bot homes mount only their own subdirectory of the application volume us
 
 ## Published images (no checkout)
 
-Pull Postgres and `ghcr.io/elie222/rakazo/app` into any empty folder. No clone or image build.
-Requires Docker Engine 26+ (API 1.45+ for bot home volume subpaths), the Compose plugin, curl, and OpenSSL.
+Runs Postgres and `ghcr.io/elie222/rakazo/app` from published images. No clone or image build.
+Requires Docker Engine 26+ (API 1.45+ for bot home volume subpaths) with the Compose plugin, and
+curl. On Linux, in a terminal, the installer offers to install Docker with Docker's own script
+when it is missing.
 
 ```bash
-mkdir -p rakazo && cd rakazo &&
-curl -fsSLO https://raw.githubusercontent.com/elie222/rakazo/main/infra/compose/install-images.sh &&
-bash install-images.sh
+curl -fsSL https://rakazo.com/install.sh | bash
 ```
 
-The installer downloads `docker-compose.images.yml` and `.env.images.example`, creates `.env` with
-random secrets, then pulls and starts the images. It preserves an existing `.env` when rerun. For
-the installer secret list, non-reuse rules, and recovery, see
+`https://rakazo.com/install.sh` redirects to `infra/compose/install-images.sh` on GitHub. Piped
+like this, the installer works in `~/rakazo` (`RAKAZO_DIR` picks another folder); saved and run as
+`bash install-images.sh`, it works in the current folder. It downloads `docker-compose.images.yml`,
+`.env.images.example` and the [`rakazo` command](#the-rakazo-command), creates `.env` with random
+secrets, then pulls and starts the images. It preserves an existing `.env` when rerun. For the
+installer secret list, non-reuse rules, and recovery, see
 [Self-host secrets checklist](./self-host-secrets.md). To customize the public URL, image tag, or
-optional providers before startup, run `bash install-images.sh --prepare-only`, edit `.env`, then
-run `bash install-images.sh`. Flags may be combined in either order: `--prepare-only`, `--local`.
+optional providers before startup, run
+`curl -fsSL https://rakazo.com/install.sh | bash -s -- --prepare-only`, edit `~/rakazo/.env`, then
+run `bash ~/rakazo/install-images.sh`. Flags may be combined in either order: `--prepare-only`,
+`--local`.
 
 `SANDBOX_PROVIDER` defaults to `docker`. The images Compose file runs a sandbox supervisor
 (from the app image, on the internal network only) and pulls `ghcr.io/elie222/rakazo/computer`.
@@ -80,22 +85,26 @@ the local Docker computer. For in-stack Caddy plus remote E2B computers, use the
 [production Compose](#public-single-vm-deployment) path and `infra/compose/Caddyfile.prod`
 instead of this host proxy.
 
-### Check an install
+### The rakazo command
 
-The installer also downloads `rakazo` next to the Compose file. When something is wrong, run:
+The installer downloads `rakazo` next to the Compose file and puts it on your PATH when it can, in
+the first of `/usr/local/bin`, `~/.local/bin` and `~/bin` that is on PATH and writable. Otherwise
+run it by its full path, such as `~/rakazo/rakazo`.
 
-```bash
-./rakazo doctor
-```
+| Command | What it does |
+| --- | --- |
+| `rakazo doctor` | Checks the install and repairs what it can |
+| `rakazo logs [service]` | Shows the last 100 log lines, and follows them in a terminal |
+| `rakazo update` | Downloads the newest installer and reruns it: it keeps `.env`, pulls the images for `RAKAZO_IMAGE_TAG`, and restarts what changed |
 
-It checks Docker, `.env`, the public address settings, computer egress, every container's
+`rakazo doctor` checks Docker, `.env`, the public address settings, computer egress, every container's
 health, the API's database login and free disk, then asks before repairing what it can: it
 starts Docker or Rakazo, restarts an unhealthy service, generates a missing secret, makes `.env`
 private, sets `WEB_ORIGIN`, `BETTER_AUTH_URL`, `API_URL` and `RAKAZO_HOST` to the one public
 address, installs the [egress rules](#restricted-computer-egress), and removes unused images.
 It checks again after each round and does not repeat a repair that did not help.
 
-`./rakazo doctor --fix` repairs without asking. Run without a terminal and without `--fix`, as
+`rakazo doctor --fix` repairs without asking. Run without a terminal and without `--fix`, as
 monitoring does, it only reports; it exits nonzero while an error remains.
 
 It never prints a secret, and never replaces `ENCRYPTION_KEY` or `POSTGRES_PASSWORD` once a

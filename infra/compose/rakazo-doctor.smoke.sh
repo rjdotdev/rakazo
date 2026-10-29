@@ -42,7 +42,7 @@ case "$*" in
   *" ps --all --quiet") [[ ! -s "$s/containers" ]] || cut -d' ' -f2 "$s/containers" ;;
   inspect*) cat "$s/containers" ;;
   *" up -d"*) [[ ! -e "$s/after-up" ]] || cp "$s/after-up" "$s/containers" ;;
-  *" restart "*) ;;
+  *" restart "* | *" logs --tail 100"*) ;;
   *) echo "unexpected docker $*" >&2; exit 99 ;;
 esac
 STUB
@@ -65,6 +65,11 @@ echo "${DOCTOR_UNAME:-Linux}"
 STUB
 cat >"$bin/curl" <<'STUB'
 #!/usr/bin/env bash
+echo "curl $*" >>"$DOCTOR_STATE/log"
+if [[ "$*" == *"/install-images.sh -o install-images.sh.tmp" ]]; then
+  printf '#!/usr/bin/env bash\necho "installer ran in $PWD" >>"$DOCTOR_STATE/log"\n' >install-images.sh.tmp
+  exit 0
+fi
 [[ "$*" == *"http://127.0.0.1:3100/ready" ]] || exit 7
 ready='{"ok":true,"degraded":false}'
 echo "${DOCTOR_READY:-$ready}"
@@ -135,7 +140,7 @@ setup ""
 doctor
 expect_status 1
 expect "Error: Rakazo is not running."
-expect "Run ./rakazo doctor --fix to fix 1 of these."
+expect "Run $install/rakazo doctor --fix to fix 1 of these."
 [[ "$(times_logged " up -d")" == 0 ]] || fail "started Rakazo without --fix"
 printf '%s\n' "$healthy" >"$state/after-up"
 touch "$install/docker-compose.override.yml"
@@ -174,7 +179,7 @@ setup "$healthy"
 doctor --fix DOCTOR_DOCKER=denied
 expect_status 1
 expect "Error: This user cannot use Docker."
-expect "to the docker group. Sign out and back in, then run ./rakazo doctor again."
+expect "to the docker group. Sign out and back in, then run $install/rakazo doctor again."
 logged "sudo usermod -aG docker"
 
 setup "$healthy"
@@ -281,12 +286,12 @@ web /rakazo-web-1 created none 0 0"
 setup "$broken"
 doctor
 expect_status 1
-expect "Error: postgres is unhealthy. See why: docker logs --tail 50 rakazo-postgres-1"
+expect "Error: postgres is unhealthy. See why: $install/rakazo logs postgres"
 expect "Warning: supervisor is still starting."
-expect "Error: api keeps restarting. See why: docker logs --tail 50 rakazo-api-1"
-expect "Error: worker keeps restarting. See why: docker logs --tail 50 rakazo-worker-1"
+expect "Error: api keeps restarting. See why: $install/rakazo logs api"
+expect "Error: worker keeps restarting. See why: $install/rakazo logs worker"
 expect "Error: web has not started."
-expect "Error: migrate failed. See why: docker logs --tail 50 rakazo-migrate-1"
+expect "Error: migrate failed. See why: $install/rakazo logs migrate"
 expect "fix 3 of these"
 printf '%s\n' "$healthy" >"$state/after-up"
 doctor --fix
@@ -297,7 +302,7 @@ logged "restart postgres"
 setup "$healthy"
 doctor --fix DOCTOR_READY='{"ok":false,"degraded":false,"database":"unreachable"}'
 expect_status 1
-expect "Error: The API cannot reach its database. See why: docker logs --tail 50 rakazo-api-1"
+expect "Error: The API cannot reach its database. See why: $install/rakazo logs api"
 refute "Starting Rakazo"
 doctor DOCTOR_READY='{"ok":false,"degraded":true}'
 expect_status 0
@@ -343,7 +348,29 @@ if script --version 2>/dev/null | grep -q util-linux; then
   expect "No problems found."
 fi
 
-for args in "status" "doctor --bogus" "doctor --fix extra"; do
+# logs: the last lines, followed only in a terminal so a script or agent gets them back.
+setup "$healthy"
+(cd "$tmp/elsewhere" && DOCTOR_STATE="$state" PATH="$bin:$PATH" bash "$install/rakazo" logs api worker </dev/null >/dev/null)
+logged "-f docker-compose.images.yml logs --tail 100 api worker"
+grep -q -- "--follow" "$state/log" && fail "followed logs without a terminal"
+if script --version 2>/dev/null | grep -q util-linux; then
+  (cd "$tmp/elsewhere" && DOCTOR_STATE="$state" PATH="$bin:$PATH" script -qec "bash '$install/rakazo' logs" /dev/null >/dev/null)
+  logged "logs --tail 100 --follow"
+fi
+
+# update: fetch the newest installer next to this file and run it there.
+setup "$healthy"
+(cd "$tmp/elsewhere" && DOCTOR_STATE="$state" PATH="$bin:$PATH" bash "$install/rakazo" update </dev/null)
+logged "https://raw.githubusercontent.com/elie222/rakazo/main/infra/compose/install-images.sh -o install-images.sh.tmp"
+logged "installer ran in $install"
+[[ ! -e "$install/install-images.sh.tmp" ]] || fail "left the download behind"
+(cd "$tmp/elsewhere" && RAKAZO_DOWNLOAD_BASE=https://mirror.example.com/rakazo/ DOCTOR_STATE="$state" PATH="$bin:$PATH" \
+  bash "$install/rakazo" update </dev/null)
+logged "https://mirror.example.com/rakazo/install-images.sh -o"
+rm "$install/install-images.sh"
+
+[[ "$(bash "$install/rakazo")" == "Usage: rakazo <command>"* ]] || fail "no usage without a command"
+for args in "status" "doctor --bogus" "doctor --fix extra" "update now"; do
   usage_status=0
   # shellcheck disable=SC2086 # one argument per word
   bash "$install/rakazo" $args >/dev/null 2>&1 || usage_status=$?

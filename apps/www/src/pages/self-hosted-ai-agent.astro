@@ -94,7 +94,7 @@ const structuredData = faqPageStructuredData(SELF_HOST_FAQS);
       <ul>
         <li>
           <strong>Published images.</strong> Docker Engine 26 or newer (API 1.45 or newer, for bot home
-          volume subpaths), the Compose plugin, curl, and OpenSSL. No Node.js install.
+          volume subpaths) with the Compose plugin, and curl. On Linux the installer offers to install Docker. No Node.js install.
         </li>
         <li>
           <strong>Source checkout.</strong> Node.js 22.22.2 or newer on the 22.x line, Node.js 24.x, or
@@ -103,10 +103,10 @@ const structuredData = faqPageStructuredData(SELF_HOST_FAQS);
       </ul>
 
       <h2 id="selfhost">Install with published images</h2>
-      <p>From an empty directory on the machine that should run Rakazo:</p>
+      <p>On the machine that should run Rakazo:</p>
       <pre><code>{PUBLISHED_IMAGES_INSTALL}</code></pre>
       <p>
-        The installer downloads the Compose file and <code>.env.images.example</code>, creates <code>.env</code> with random secrets, and starts Rakazo. It keeps an existing <code>.env</code> when you run it again. The default image tag is <code>edge</code> (builds
+        The installer works in <code>~/rakazo</code>: it downloads the Compose file, creates <code>.env</code> with random secrets, and starts Rakazo. It keeps an existing <code>.env</code> when you run it again. Then <code>rakazo doctor</code> checks and repairs the install, <code>rakazo logs</code> shows its logs, and <code>rakazo update</code> updates it. The default image tag is <code>edge</code> (builds
         from the main branch, <code>linux/amd64</code> and <code>linux/arm64</code>).
       </p>
       <p>

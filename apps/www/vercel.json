@@ -13,6 +13,11 @@
       "statusCode": 301
     },
     {
+      "source": "/install.sh",
+      "destination": "https://raw.githubusercontent.com/elie222/rakazo/main/infra/compose/install-images.sh",
+      "statusCode": 302
+    },
+    {
       "source": "/sitemap.xml",
       "destination": "/sitemap-index.xml",
       "statusCode": 301

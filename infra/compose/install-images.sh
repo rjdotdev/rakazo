@@ -15,6 +15,22 @@ case "$DOWNLOAD_BASE" in
 esac
 readonly DOWNLOAD_BASE
 
+# Piped (`curl -fsSL <url> | bash`), there is no file or folder yet. Put the installer in its own
+# folder, ~/rakazo unless RAKAZO_DIR names another, and rerun it from there with the terminal as
+# input, so its questions work and `rakazo update` finds it in place.
+if [[ ! -f "${BASH_SOURCE[0]:-}" ]]; then
+  install_dir="${RAKAZO_DIR:-$HOME/rakazo}"
+  mkdir -p "$install_dir" && cd "$install_dir" || exit 1
+  if ! curl -fsSL --proto-redir =https --retry 3 "$DOWNLOAD_BASE/install-images.sh" -o install-images.sh.tmp; then
+    echo "Rakazo setup failed: could not download $DOWNLOAD_BASE/install-images.sh." >&2
+    exit 1
+  fi
+  mv install-images.sh.tmp install-images.sh
+  input=/dev/null
+  (exec </dev/tty) 2>/dev/null && input=/dev/tty
+  exec bash install-images.sh "$@" <"$input"
+fi
+
 readonly COMPOSE_FILE="docker-compose.images.yml"
 # Optional operator overlay, layered after the base file the way Compose itself does by default.
 readonly OVERRIDE_FILE="docker-compose.override.yml"
@@ -80,9 +96,29 @@ else
   command -v curl >/dev/null 2>&1 || fail "'curl' is required."
 fi
 
-for command_name in docker openssl; do
-  command -v "$command_name" >/dev/null 2>&1 || fail "'$command_name' is required."
-done
+as_root() {
+  if ((EUID == 0)); then "$@"; else sudo "$@"; fi
+}
+
+# A fresh Linux server rarely has Docker. In a terminal, offer Docker's own install script.
+install_docker() {
+  local answer
+  [[ "$offline" == false && "$(uname -s)" == Linux && -t 0 ]] || return 1
+  printf 'Rakazo runs on Docker, which is not installed. Install it now? [Y/n] '
+  read -r answer || return 1
+  [[ ! "$answer" =~ ^[Nn] ]] || return 1
+  echo "Installing Docker..."
+  curl -fsSL https://get.docker.com | as_root sh >/dev/null || fail "could not install Docker. See https://docs.docker.com/engine/install/"
+  docker info >/dev/null 2>&1 && return 0
+  ((EUID != 0)) || fail "Docker is installed but not running. Start it, then run this again."
+  # Membership of the docker group starts with the next sign-in.
+  as_root usermod -aG docker "$(id -un)"
+  echo "Docker is installed. Sign out and back in, then run this again."
+  exit 1
+}
+if ! command -v docker >/dev/null 2>&1; then
+  install_docker || fail "Docker is required. See https://docs.docker.com/engine/install/"
+fi
 docker compose version >/dev/null 2>&1 || fail "the Docker Compose plugin is required."
 
 # Optional proxy knobs from an existing .env (operators often set them there for
@@ -227,6 +263,9 @@ download() {
   temporary_file=""
 }
 
+# Random hex from the kernel, so setup needs no OpenSSL.
+random_hex() { head -c "$1" /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+
 create_env() {
   local generated_encryption_key=false
   umask 077
@@ -235,23 +274,23 @@ create_env() {
   while IFS= read -r line || [[ -n "$line" ]]; do
     case "$line" in
       "POSTGRES_PASSWORD=")
-        printf 'POSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 16)"
+        printf 'POSTGRES_PASSWORD=%s\n' "$(random_hex 16)"
         ;;
       "POSTGRES_APP_PASSWORD=")
-        printf 'POSTGRES_APP_PASSWORD=%s\n' "$(openssl rand -hex 16)"
+        printf 'POSTGRES_APP_PASSWORD=%s\n' "$(random_hex 16)"
         ;;
       "BETTER_AUTH_SECRET=")
-        printf 'BETTER_AUTH_SECRET=%s\n' "$(openssl rand -hex 32)"
+        printf 'BETTER_AUTH_SECRET=%s\n' "$(random_hex 32)"
         ;;
       "ENCRYPTION_KEY=")
-        printf 'ENCRYPTION_KEY=%s\n' "$(openssl rand -hex 32)"
+        printf 'ENCRYPTION_KEY=%s\n' "$(random_hex 32)"
         generated_encryption_key=true
         ;;
       "SCREEN_PROXY_SECRET=")
-        printf 'SCREEN_PROXY_SECRET=%s\n' "$(openssl rand -hex 32)"
+        printf 'SCREEN_PROXY_SECRET=%s\n' "$(random_hex 32)"
         ;;
       "SANDBOX_SUPERVISOR_TOKEN=")
-        printf 'SANDBOX_SUPERVISOR_TOKEN=%s\n' "$(openssl rand -hex 32)"
+        printf 'SANDBOX_SUPERVISOR_TOKEN=%s\n' "$(random_hex 32)"
         ;;
       *)
         printf '%s\n' "$line"
@@ -274,7 +313,7 @@ create_env() {
 add_missing_secrets() {
   if ! grep -Eq '^POSTGRES_APP_PASSWORD=[^[:space:]]' "$ENV_FILE"; then
     [[ ! -s "$ENV_FILE" || -z "$(tail -c 1 "$ENV_FILE")" ]] || printf '\n' >> "$ENV_FILE"
-    printf 'POSTGRES_APP_PASSWORD=%s\n' "$(openssl rand -hex 16)" >> "$ENV_FILE"
+    printf 'POSTGRES_APP_PASSWORD=%s\n' "$(random_hex 16)" >> "$ENV_FILE"
     echo "Added POSTGRES_APP_PASSWORD to .env."
   fi
 }
@@ -374,9 +413,26 @@ configure_computer_egress() {
 for filename in "${required_files[@]}"; do
   download "$filename"
 done
-# Optional: ./rakazo doctor checks and repairs this install. Setup goes on without it.
+# Puts `rakazo` on PATH: a small script, in the first writable PATH folder of these, that runs
+# this folder's copy. A same-named command that is not one of these scripts is left alone.
+link_cli() {
+  local dir target
+  for dir in /usr/local/bin "$HOME/.local/bin" "$HOME/bin"; do
+    [[ ":$PATH:" == *":$dir:"* && -d "$dir" && -w "$dir" ]] || continue
+    target="$dir/$CLI"
+    [[ ! -e "$target" ]] || grep -qx '# Rakazo command' "$target" 2>/dev/null || return 1
+    printf '#!/usr/bin/env bash\n# Rakazo command\nexec %q "$@"\n' "$PWD/$CLI" >"$target" && chmod 755 "$target"
+    return
+  done
+  return 1
+}
+
+# Optional: the rakazo command (doctor, logs, update). Setup goes on without it.
+cli=""
 if (trap cleanup EXIT; download "$CLI") 2>/dev/null; then
   chmod u+x "$CLI"
+  cli="$PWD/$CLI"
+  if link_cli; then cli="$CLI"; fi
 fi
 
 compose_files=(-f "$COMPOSE_FILE")
@@ -398,7 +454,7 @@ validate_required_secrets
 warn_unpassed_settings
 
 if [[ "$prepare_only" == true ]]; then
-  echo "Rakazo files are ready. Edit .env, then run: bash install-images.sh"
+  echo "Rakazo files are ready. Edit $PWD/.env, then run: bash $PWD/install-images.sh"
   exit 0
 fi
 
@@ -413,7 +469,7 @@ else
   fi
 fi
 start_failed() {
-  [[ ! -x "$CLI" ]] || fail "services did not start. Run ./${CLI} doctor to fix them."
+  [[ -z "$cli" ]] || fail "services did not start. Run $cli doctor to fix them."
   exit 1
 }
 # `--wait` without `--wait-timeout` can hang on one-shot services (Compose < 2.7)
@@ -436,3 +492,4 @@ else
 fi
 
 echo "Rakazo is starting at http://127.0.0.1:5173"
+[[ -z "$cli" ]] || echo "Commands: $cli doctor, $cli logs, $cli update"

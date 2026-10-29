@@ -15,13 +15,11 @@ export const OPENCLAW_FEATURES_URL = "https://docs.openclaw.ai/concepts/features
 export const OPENCLAW_SANDBOX_URL = "https://docs.openclaw.ai/gateway/sandboxing";
 export const OPENCLAW_GITHUB_URL = "https://github.com/openclaw/openclaw";
 
-export const PUBLISHED_IMAGES_INSTALL = `mkdir -p rakazo && cd rakazo &&
-curl -fsSLO https://raw.githubusercontent.com/elie222/rakazo/main/infra/compose/install-images.sh &&
-bash install-images.sh`;
+export const PUBLISHED_IMAGES_INSTALL = "curl -fsSL https://rakazo.com/install.sh | bash";
 
-export const PUBLISHED_IMAGES_SERVER = `bash install-images.sh --prepare-only
-# Edit .env, then:
-bash install-images.sh`;
+export const PUBLISHED_IMAGES_SERVER = `curl -fsSL https://rakazo.com/install.sh | bash -s -- --prepare-only
+# Edit ~/rakazo/.env, then:
+bash ~/rakazo/install-images.sh`;
 
 export const SOURCE_CHECKOUT = `git clone https://github.com/elie222/rakazo.git
 cd rakazo
@@ -69,7 +67,7 @@ export const SELF_HOST_FAQS: readonly FaqItem[] = [
   {
     question: "What do I need to self-host Rakazo?",
     answer:
-      "Published images need Docker Engine 26 or newer, the Compose plugin, curl, and OpenSSL. You do not need Node.js for that path. A source checkout needs Node.js 22.22.2 or newer on the 22.x line, Node.js 24.x, or Node.js 26 or newer, plus pnpm 9 and Docker. Node.js 23.x and 25.x are not supported.",
+      "Published images need Docker Engine 26 or newer with the Compose plugin, and curl. On Linux the installer offers to install Docker. You do not need Node.js for that path. A source checkout needs Node.js 22.22.2 or newer on the 22.x line, Node.js 24.x, or Node.js 26 or newer, plus pnpm 9 and Docker. Node.js 23.x and 25.x are not supported.",
   },
   {
     question: "Where does my data live?",
@@ -295,7 +293,7 @@ The [full guide](${DOCS_URL}) lists every setting for each one.
 
 ## Requirements
 
-Published images need Docker Engine 26 or newer (API 1.45 or newer, for bot home volume subpaths), the Compose plugin, curl, and OpenSSL. No Node.js install.
+Published images need Docker Engine 26 or newer (API 1.45 or newer, for bot home volume subpaths) with the Compose plugin, and curl. On Linux the installer offers to install Docker. No Node.js install.
 
 A source checkout needs Node.js 22.22.2 or newer on the 22.x line, Node.js 24.x, or Node.js 26 or newer, plus pnpm 9 and Docker. Node.js 23.x and 25.x are not supported.
 
@@ -305,7 +303,7 @@ A source checkout needs Node.js 22.22.2 or newer on the 22.x line, Node.js 24.x,
 ${PUBLISHED_IMAGES_INSTALL}
 \`\`\`
 
-The installer downloads the Compose file and \`.env.images.example\`, creates \`.env\` with random secrets, and starts Rakazo. It keeps an existing \`.env\` when you run it again. The default image tag is \`edge\` (builds from the main branch, \`linux/amd64\` and \`linux/arm64\`).
+The installer works in \`~/rakazo\`: it downloads the Compose file, creates \`.env\` with random secrets, and starts Rakazo. It keeps an existing \`.env\` when you run it again. Then \`rakazo doctor\` checks and repairs the install, \`rakazo logs\` shows its logs, and \`rakazo update\` updates it. The default image tag is \`edge\` (builds from the main branch, \`linux/amd64\` and \`linux/arm64\`).
 
 Open [http://127.0.0.1:5173](http://127.0.0.1:5173) and create an account. The first registered user becomes the deployment owner. Connect a model in the app, or set \`OPENROUTER_API_KEY\` before startup. Local Docker computers are on by default.
 

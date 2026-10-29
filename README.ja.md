@@ -60,16 +60,14 @@ https://github.com/user-attachments/assets/dccdeddb-2134-4a56-8eed-b2e591736b1c
 
 ## クイックスタート（公開イメージ）
 
-Docker Engine、Compose プラグイン、curl、OpenSSL が必要です。リポジトリのクローンや Node のインストールは不要です。
+リポジトリのクローンや Node のインストールは不要です。Linux ではインストーラーが Docker のインストールを提案します。それ以外の環境では、先に Docker をインストールしてください。
 
 ```bash
-mkdir -p rakazo && cd rakazo &&
-curl -fsSLO https://raw.githubusercontent.com/elie222/rakazo/main/infra/compose/install-images.sh &&
-bash install-images.sh
+curl -fsSL https://rakazo.com/install.sh | bash
 ```
 
-インストーラーは Compose ファイルをダウンロードし、ランダムなシークレットを含む `.env` を作成して Rakazo を起動します。
-再実行時は既存の `.env` をそのまま残します。
+`~/rakazo` にインストールし、ランダムなシークレットを含む `.env` を作成して Rakazo を起動します。その後は
+`rakazo doctor` でインストールを確認・修復し、`rakazo logs` でログを表示し、`rakazo update` で更新します。
 
 [http://127.0.0.1:5173](http://127.0.0.1:5173) を開き、アカウントを作成してモデルを接続します。
 ローカルの Docker コンピューターはデフォルトで有効です。リモートプロバイダーとして `e2b`、`daytona`、`createos`、`boat`、`railway`
@@ -91,9 +89,9 @@ bash install-images.sh
 デスクトップアプリ、モバイルアプリ、またはブラウザーから接続します。
 
 ```bash
-bash install-images.sh --prepare-only
-# edit .env: SANDBOX_PROVIDER=boat (or e2b / daytona / createos) with its API key, RAKAZO_HOST=your.domain
-bash install-images.sh
+curl -fsSL https://rakazo.com/install.sh | bash -s -- --prepare-only
+# edit ~/rakazo/.env: SANDBOX_PROVIDER=boat (or e2b / daytona / createos) with its API key, RAKAZO_HOST=your.domain
+bash ~/rakazo/install-images.sh
 ```
 
 ポート 5173 の前段に HTTPS を置いてください。Caddy の設定とホストの堅牢化については

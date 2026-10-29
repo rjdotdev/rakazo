@@ -69,12 +69,10 @@ export const GROK_SOURCES = [
   { label: "OpenMuse source", href: "https://github.com/CopilotKit/openmuse" },
 ] as const;
 
-export const INSTALL_COMMAND = `mkdir -p rakazo && cd rakazo &&
-curl -fsSLO https://raw.githubusercontent.com/elie222/rakazo/main/infra/compose/install-images.sh &&
-bash install-images.sh`;
+export const INSTALL_COMMAND = "curl -fsSL https://rakazo.com/install.sh | bash";
 
 export const SELF_HOST_LEAD =
-  "Published images need Docker Engine 26+ (API 1.45+ for bot home volume subpaths), the Compose plugin, curl, and OpenSSL.";
+  "Published images need Docker Engine 26+ (API 1.45+ for bot home volume subpaths) with the Compose plugin, and curl. On Linux the installer offers to install Docker.";
 
 export const SELF_HOST_AFTER = [
   "On this computer, open http://127.0.0.1:5173, create an account, and connect a model. That address is only on the machine running Rakazo. Local Docker computers are on by default.",
@@ -163,7 +161,7 @@ export const GROK_SECTIONS = [
   {
     heading: "Setup, then the chat",
     paragraphs: [
-      "Published images need Docker Engine 26 or newer, the Compose plugin, curl, and OpenSSL. You do not need Node.js for that path. A source checkout needs a supported Node.js line and pnpm, plus Docker. The desktop app can install the published images on this computer, or connect to an instance you already run.",
+      "Published images need Docker Engine 26 or newer with the Compose plugin, and curl. On Linux the installer offers to install Docker. You do not need Node.js for that path. A source checkout needs a supported Node.js line and pnpm, plus Docker. The desktop app can install the published images on this computer, or connect to an instance you already run.",
       "On this computer, open the local web app, create an account, and connect a model. The first registered user becomes the deployment owner. Local Docker computers are on by default. From there the product is the chat. You do not keep a gateway process running, and you do not edit a config file to change the bot's routines.",
       "On a server, the installer can stop before startup so you can set the public HTTPS origin and create the owner account before anyone else can reach it. The self-hosting guide covers backups, upgrades, secrets, and restricted networks. Voice, if you want it, uses a key you bring for ElevenLabs, OpenAI, Cartesia, or Fish Audio.",
       "The [self-hosted AI agent](/self-hosted-ai-agent/) page is that install. [How to self-host an AI agent](/blog/self-host-an-ai-agent/) walks through the published images.",

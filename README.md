@@ -58,16 +58,16 @@ https://github.com/user-attachments/assets/dccdeddb-2134-4a56-8eed-b2e591736b1c
 
 ## Quick start (published images)
 
-You need Docker Engine, the Compose plugin, curl, and OpenSSL. No clone or Node install.
+No clone or Node install. On Linux the installer offers to install Docker; elsewhere, install
+Docker first.
 
 ```bash
-mkdir -p rakazo && cd rakazo &&
-curl -fsSLO https://raw.githubusercontent.com/elie222/rakazo/main/infra/compose/install-images.sh &&
-bash install-images.sh
+curl -fsSL https://rakazo.com/install.sh | bash
 ```
 
-The installer downloads the Compose files, creates `.env` with random secrets, and starts Rakazo.
-It preserves an existing `.env` when rerun.
+It installs into `~/rakazo`, creates `.env` with random secrets, and starts Rakazo. Then
+`rakazo doctor` checks and repairs the install, `rakazo logs` shows its logs, and `rakazo update`
+updates it.
 
 Open [http://127.0.0.1:5173](http://127.0.0.1:5173), create an account, and connect a model.
 Local Docker computers are on by default. Optional remote providers: `e2b`, `novita`, `daytona`, `createos`, `boat`, or `railway`
@@ -89,9 +89,9 @@ Bots stay on when the backend runs on a server. Use the same installer on a VPS,
 the desktop app, the mobile app, or a browser.
 
 ```bash
-bash install-images.sh --prepare-only
-# edit .env: SANDBOX_PROVIDER=boat (or e2b / daytona / createos) with its API key, RAKAZO_HOST=your.domain
-bash install-images.sh
+curl -fsSL https://rakazo.com/install.sh | bash -s -- --prepare-only
+# edit ~/rakazo/.env: SANDBOX_PROVIDER=boat (or e2b / daytona / createos) with its API key, RAKAZO_HOST=your.domain
+bash ~/rakazo/install-images.sh
 ```
 
 Put HTTPS in front of port 5173; [docs/self-host.md](./docs/self-host.md#public-single-vm-deployment)

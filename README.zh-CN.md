@@ -75,16 +75,14 @@ https://github.com/user-attachments/assets/dccdeddb-2134-4a56-8eed-b2e591736b1c
 
 ## 快速开始（已发布镜像）
 
-需要 Docker Engine、Compose 插件、curl 和 OpenSSL。无需克隆仓库或安装 Node.js。
+无需克隆仓库或安装 Node.js。在 Linux 上，安装脚本会提议安装 Docker；在其他系统上，请先安装 Docker。
 
 ```bash
-mkdir -p rakazo && cd rakazo &&
-curl -fsSLO https://raw.githubusercontent.com/elie222/rakazo/main/infra/compose/install-images.sh &&
-bash install-images.sh
+curl -fsSL https://rakazo.com/install.sh | bash
 ```
 
-安装脚本会下载 Compose 文件，生成包含随机密钥的 `.env`，并启动 Rakazo。
-再次运行时会保留已有的 `.env`。
+它会安装到 `~/rakazo`，生成包含随机密钥的 `.env`，并启动 Rakazo。之后，
+`rakazo doctor` 会检查并修复安装，`rakazo logs` 显示日志，`rakazo update` 进行更新。
 
 打开 [http://127.0.0.1:5173](http://127.0.0.1:5173)，创建账号并连接模型。
 默认启用本地 Docker 计算机。也可以选择远程提供商 `e2b`、`daytona`、`createos`、`box` 或 `railway`，
@@ -105,9 +103,9 @@ bash install-images.sh
 然后通过桌面应用、移动应用或浏览器连接。
 
 ```bash
-bash install-images.sh --prepare-only
-# edit .env: SANDBOX_PROVIDER=boat (or e2b / daytona / createos) with its API key, RAKAZO_HOST=your.domain
-bash install-images.sh
+curl -fsSL https://rakazo.com/install.sh | bash -s -- --prepare-only
+# edit ~/rakazo/.env: SANDBOX_PROVIDER=boat (or e2b / daytona / createos) with its API key, RAKAZO_HOST=your.domain
+bash ~/rakazo/install-images.sh
 ```
 
 为 5173 端口配置 HTTPS 入口。[docs/self-host.md](./docs/self-host.md#public-single-vm-deployment)

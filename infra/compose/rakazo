@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Operator commands for a published-images install, kept next to docker-compose.images.yml.
-# `./rakazo doctor` checks Docker, .env and the containers, then repairs what it safely can: in a
+# `rakazo doctor` checks Docker, .env and the containers, then repairs what it safely can: in a
 # terminal after asking, with --fix without asking, and never when run unattended without --fix.
 # It never prints a secret from .env and never replaces one that existing data depends on.
 set -uo pipefail
@@ -16,15 +16,19 @@ readonly LONG_RUNNING=" postgres supervisor api worker web "
 # The secrets install-images.sh generates. A new value for the last two cannot open existing data.
 readonly SECRETS="POSTGRES_APP_PASSWORD BETTER_AUTH_SECRET SCREEN_PROXY_SECRET SANDBOX_SUPERVISOR_TOKEN ENCRYPTION_KEY POSTGRES_PASSWORD"
 
-usage="Usage: ./rakazo doctor [--fix]"
+usage="Usage: rakazo <command>
+  doctor [--fix]   Check this install and repair what it can
+  logs [service]   Show recent logs, and follow them in a terminal
+  update           Update Rakazo and restart it"
 mode=report
 case "$*" in
-  -h | --help | help)
+  "" | -h | --help | help)
     echo "$usage"
     exit 0
     ;;
   doctor) [[ ! -t 0 || ! -t 1 ]] || mode=ask ;;
   "doctor --fix") mode=fix ;;
+  logs | "logs "* | update) ;;
   *)
     echo "$usage" >&2
     exit 2
@@ -35,6 +39,28 @@ cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
 
 compose=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
 [[ ! -f "$OVERRIDE_FILE" ]] || compose+=(-f "$OVERRIDE_FILE")
+# How hints name this command: plain `rakazo` once the installer has put it on PATH.
+cli="$PWD/rakazo"
+command -v rakazo >/dev/null 2>&1 && cli=rakazo
+
+if [[ "$1" == logs ]]; then
+  shift
+  follow=()
+  [[ ! -t 1 ]] || follow=(--follow)
+  exec "${compose[@]}" logs --tail 100 ${follow[@]+"${follow[@]}"} "$@"
+fi
+# The newest installer redoes setup in place: it keeps .env, refreshes the Compose files and this
+# command, pulls the images for RAKAZO_IMAGE_TAG and restarts what changed.
+if [[ "$1" == update ]]; then
+  base="${RAKAZO_DOWNLOAD_BASE:-https://raw.githubusercontent.com/elie222/rakazo/main/infra/compose}"
+  if ! curl -fsSL --proto =https --proto-redir =https --retry 3 "${base%/}/$INSTALLER" -o "$INSTALLER.tmp"; then
+    rm -f -- "$INSTALLER.tmp"
+    echo "Could not download ${base%/}/$INSTALLER." >&2
+    exit 1
+  fi
+  mv -- "$INSTALLER.tmp" "$INSTALLER" && exec bash "$INSTALLER"
+  exit 1
+fi
 
 error() {
   echo "Error: $*"
@@ -61,7 +87,7 @@ fix() {
 
 # The value Compose resolves for a setting: the shell first, then .env.
 setting() { sed -n "s/^$1=//p" <<<"$environment" | tail -n 1; }
-logs_hint() { echo "See why: docker logs --tail 50 $1"; }
+logs_hint() { echo "See why: $cli logs $1"; }
 host_of() {
   local host="${1#*://}"
   host="${host%%/*}"
@@ -191,7 +217,7 @@ egress_rules_supported() {
 }
 
 check_services() {
-  local ids rows service row name state health restarts code
+  local ids rows service row state health restarts code
   if ! ids="$("${compose[@]}" ps --all --quiet 2>/dev/null)"; then
     error "Could not list Rakazo's containers."
     return
@@ -210,7 +236,7 @@ check_services() {
     # During a rolling replacement one healthy container is enough.
     row="$(grep -E "^$service [^ ]+ running (healthy|none) " <<<"$rows" | head -n 1)"
     if [[ -n "$row" ]]; then
-      [[ "$service" != api ]] || api_container="$(awk '{ print substr($2, 2) }' <<<"$row")"
+      [[ "$service" != api ]] || api_healthy=1
       continue
     fi
     row="$(grep "^$service " <<<"$rows" | head -n 1)"
@@ -219,25 +245,24 @@ check_services() {
       fix up
       continue
     fi
-    read -r _ name state health restarts _ <<<"$row"
-    name="${name#/}"
+    read -r _ _ state health restarts _ <<<"$row"
     case "$state/$health" in
       created/*)
         error "$service has not started."
         fix up
         ;;
       running/unhealthy)
-        error "$service is unhealthy. $(logs_hint "$name")"
+        error "$service is unhealthy. $(logs_hint "$service")"
         fix "restart_service:$service"
         ;;
       running/starting)
         if ((restarts == 0)); then
           warn "$service is still starting."
         else
-          error "$service keeps restarting. $(logs_hint "$name")"
+          error "$service keeps restarting. $(logs_hint "$service")"
         fi
         ;;
-      restarting/*) error "$service keeps restarting. $(logs_hint "$name")" ;;
+      restarting/*) error "$service keeps restarting. $(logs_hint "$service")" ;;
       # Each of these restarts on failure, so one that stays down was stopped.
       *)
         error "$service is not running."
@@ -245,9 +270,9 @@ check_services() {
         ;;
     esac
   done
-  while read -r service name state _ _ code; do
+  while read -r service _ state _ _ code; do
     [[ "$LONG_RUNNING" == *" $service "* || "$state" != exited || "$code" == 0 ]] && continue
-    error "$service failed. $(logs_hint "${name#/}")"
+    error "$service failed. $(logs_hint "$service")"
     fix up
   done <<<"$rows"
 }
@@ -255,15 +280,15 @@ check_services() {
 # The API's own readiness: its database login works and secret storage is whole.
 check_api() {
   local port body
-  [[ -n "$api_container" ]] && command -v curl >/dev/null 2>&1 || return 0
+  ((api_healthy)) && command -v curl >/dev/null 2>&1 || return 0
   port="$(setting RAKAZO_API_PORT)"
   if ! body="$(curl -sS -m 5 "http://127.0.0.1:${port:-3100}/ready" 2>/dev/null)"; then
     error "The API does not answer on 127.0.0.1:${port:-3100}."
     return
   fi
   case "$body" in
-    *'"database":"unreachable"'*) error "The API cannot reach its database. $(logs_hint "$api_container")" ;;
-    *'"degraded":true'*) warn "Secret storage is degraded. $(logs_hint "$api_container")" ;;
+    *'"database":"unreachable"'*) error "The API cannot reach its database. $(logs_hint api)" ;;
+    *'"degraded":true'*) warn "Secret storage is degraded. $(logs_hint api)" ;;
   esac
 }
 
@@ -283,7 +308,7 @@ run_checks() {
   errors=0 warnings=0 fixable=0 start_after_fixes=0
   fixes=()
   environment=""
-  api_container=""
+  api_healthy=0
   check_docker || return 0
   check_config || return 0
   check_settings
@@ -322,7 +347,7 @@ start_docker() {
 add_to_docker_group() {
   local user="${USER:-$(id -un)}"
   sudo usermod -aG docker "$user" || return
-  echo "Added $user to the docker group. Sign out and back in, then run ./rakazo doctor again."
+  echo "Added $user to the docker group. Sign out and back in, then run $cli doctor again."
   exit 1
 }
 
@@ -381,7 +406,7 @@ for round in 1 2 3 4; do
   run_checks
   ((fixable > 0 && round < 4)) || break
   if [[ "$mode" == report ]]; then
-    echo "Run ./rakazo doctor --fix to fix $fixable of these."
+    echo "Run $cli doctor --fix to fix $fixable of these."
     break
   fi
   if [[ "$mode" == ask ]]; then
