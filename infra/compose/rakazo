@@ -49,16 +49,20 @@ if [[ "$1" == logs ]]; then
   [[ ! -t 1 ]] || follow=(--follow)
   exec "${compose[@]}" logs --tail 100 ${follow[@]+"${follow[@]}"} "$@"
 fi
+# Replaces one of this install's files with the newest copy from where the installer came from.
+fetch() {
+  local base="${RAKAZO_DOWNLOAD_BASE:-https://raw.githubusercontent.com/elie222/rakazo/main/infra/compose}"
+  if curl -fsSL --proto =https --proto-redir =https --retry 3 "${base%/}/$1" -o "$1.tmp" && mv -- "$1.tmp" "$1"; then
+    return 0
+  fi
+  rm -f -- "$1.tmp"
+  echo "Could not download ${base%/}/$1." >&2
+  return 1
+}
 # The newest installer redoes setup in place: it keeps .env, refreshes the Compose files and this
 # command, pulls the images for RAKAZO_IMAGE_TAG and restarts what changed.
 if [[ "$1" == update ]]; then
-  base="${RAKAZO_DOWNLOAD_BASE:-https://raw.githubusercontent.com/elie222/rakazo/main/infra/compose}"
-  if ! curl -fsSL --proto =https --proto-redir =https --retry 3 "${base%/}/$INSTALLER" -o "$INSTALLER.tmp"; then
-    rm -f -- "$INSTALLER.tmp"
-    echo "Could not download ${base%/}/$INSTALLER." >&2
-    exit 1
-  fi
-  mv -- "$INSTALLER.tmp" "$INSTALLER" && exec bash "$INSTALLER"
+  fetch "$INSTALLER" && exec bash "$INSTALLER"
   exit 1
 fi
 
@@ -88,6 +92,11 @@ fix() {
 # The value Compose resolves for a setting: the shell first, then .env.
 setting() { sed -n "s/^$1=//p" <<<"$environment" | tail -n 1; }
 logs_hint() { echo "See why: $cli logs $1"; }
+api_port() {
+  local port
+  port="$(setting RAKAZO_API_PORT)"
+  echo "${port:-3100}"
+}
 host_of() {
   local host="${1#*://}"
   host="${host%%/*}"
@@ -96,6 +105,11 @@ host_of() {
 # A DNS name, as opposed to an IP address or localhost.
 is_named() { [[ "$1" != localhost && "$1" != \[* && "$1" =~ [A-Za-z] ]]; }
 is_local() { [[ "$(host_of "$1")" =~ ^(localhost|127\.0\.0\.1|\[::1\])$ ]]; }
+# Whoever can change a file that runs with sudo, or its folder, can become root: only files this
+# user owns, in a folder they own, that no one else can write, are run that way.
+private_to_me() {
+  [[ "$(find "$1" "$(dirname "$1")" -maxdepth 0 -user "$(id -u)" ! -perm -002 2>/dev/null | wc -l)" -eq 2 ]]
+}
 has_env() { grep -Eq "^[[:space:]]*(export[[:space:]]+)?$1=[\"']?[^\"'[:space:]#]" "$ENV_FILE"; }
 # Unless Docker says otherwise, assume a database exists.
 has_database() {
@@ -136,6 +150,11 @@ check_config() {
       error "$ENV_FILE is missing. Run bash $INSTALLER to create it."
     fi
     return 1
+  fi
+  # Changing this folder's Compose file or .env runs anything through Docker, which is root.
+  if [[ -n "$(find . -maxdepth 0 -perm -002)" ]]; then
+    error "Other users can change $PWD."
+    fix secure_folder:
   fi
   mode="$(ls -l "$ENV_FILE")"
   if [[ "${mode:4:6}" != "------" ]]; then
@@ -198,22 +217,6 @@ check_settings() {
     fi
     [[ "$address" == https://* ]] || warn "$address is not https. Put TLS in front of Rakazo."
   fi
-  if [[ "$(setting SANDBOX_PROVIDER)" =~ ^(docker)?$ && "$(setting SANDBOX_COMPUTER_EGRESS)" == open ]]; then
-    if egress_rules_supported; then
-      warn "Bot computers can reach this host, its LAN and cloud metadata."
-      fix restrict_egress:
-    else
-      warn "Bot computers can reach this host, its LAN and cloud metadata. See Restricted computer egress in docs/self-host.md."
-    fi
-  fi
-}
-
-# As install-images.sh decides: Linux Docker Engine with iptables, not Docker Desktop or rootless.
-egress_rules_supported() {
-  local info
-  [[ "$(uname -s)" == Linux && -f "$EGRESS_SCRIPT" ]] && command -v iptables >/dev/null 2>&1 || return 1
-  info="$(docker info --format '{{.OperatingSystem}} {{json .SecurityOptions}}' 2>/dev/null)" || return 1
-  [[ "$info" != *"Docker Desktop"* && "$info" != *rootless* ]]
 }
 
 check_services() {
@@ -237,6 +240,7 @@ check_services() {
     row="$(grep -E "^$service [^ ]+ running (healthy|none) " <<<"$rows" | head -n 1)"
     if [[ -n "$row" ]]; then
       [[ "$service" != api ]] || api_healthy=1
+      [[ "$service" != supervisor ]] || supervisor_container="$(awk '{ print substr($2, 2) }' <<<"$row")"
       continue
     fi
     row="$(grep "^$service " <<<"$rows" | head -n 1)"
@@ -279,17 +283,77 @@ check_services() {
 
 # The API's own readiness: its database login works and secret storage is whole.
 check_api() {
-  local port body
+  local body
   ((api_healthy)) && command -v curl >/dev/null 2>&1 || return 0
-  port="$(setting RAKAZO_API_PORT)"
-  if ! body="$(curl -sS -m 5 "http://127.0.0.1:${port:-3100}/ready" 2>/dev/null)"; then
-    error "The API does not answer on 127.0.0.1:${port:-3100}."
+  if ! body="$(curl -sS -m 5 "http://127.0.0.1:$(api_port)/ready" 2>/dev/null)"; then
+    error "The API does not answer on 127.0.0.1:$(api_port)."
     return
   fi
   case "$body" in
     *'"database":"unreachable"'*) error "The API cannot reach its database. $(logs_hint api)" ;;
     *'"degraded":true'*) warn "Secret storage is degraded. $(logs_hint api)" ;;
   esac
+}
+
+# Bot computers: that the API runs the provider .env names, and for Docker computers, their image
+# and the host firewall rules that keep them off this host and its network.
+check_computers() {
+  local provider running image
+  provider="$(setting SANDBOX_PROVIDER)"
+  provider="${provider:-docker}"
+  # Without its key or settings a provider falls back to none, and bots silently have no computer.
+  if [[ "$provider" != none ]] && ((api_healthy)) && command -v curl >/dev/null 2>&1; then
+    running="$(curl -sS -m 5 "http://127.0.0.1:$(api_port)/internal/health" 2>/dev/null |
+      sed -n 's/.*"sandbox":"\([^"]*\)".*/\1/p')"
+    [[ "$running" != none ]] ||
+      error "Bots have no computers: SANDBOX_PROVIDER=$provider is missing its key or settings. See Choosing a computer provider in docs/self-host.md."
+  fi
+  [[ "$provider" == docker ]] || return 0
+  if [[ -n "$supervisor_container" ]]; then
+    image="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$supervisor_container" 2>/dev/null |
+      sed -n 's/^RAKAZO_COMPUTER_IMAGE=//p')"
+    if [[ -n "$image" ]] && ! docker image inspect "$image" >/dev/null 2>&1; then
+      error "The bot computer image is missing, so computers cannot start."
+      fix "pull_image:$image"
+    fi
+  fi
+  check_egress
+}
+
+# As install-images.sh decides: Linux Docker Engine with iptables, not Docker Desktop or rootless.
+egress_rules_possible() {
+  local info
+  [[ "$(uname -s)" == Linux ]] && command -v iptables >/dev/null 2>&1 || return 1
+  info="$(docker info --format '{{.OperatingSystem}} {{json .SecurityOptions}}' 2>/dev/null)" || return 1
+  [[ "$info" != *"Docker Desktop"* && "$info" != *rootless* ]]
+}
+
+check_egress() {
+  local egress rules=unknown
+  egress="$(setting SANDBOX_COMPUTER_EGRESS)"
+  if ! egress_rules_possible; then
+    [[ "$egress" != restricted ]] ||
+      error "SANDBOX_COMPUTER_EGRESS=restricted cannot work with this Docker, so bot computers cannot start. Set it to open; see Restricted computer egress in docs/self-host.md."
+    return
+  fi
+  # The egress script applies its rules and enables a unit that puts them back at each boot.
+  if command -v systemctl >/dev/null 2>&1 && systemctl show-environment >/dev/null 2>&1; then
+    rules=off
+    if systemctl is-enabled --quiet rakazo-computer-egress.service &&
+      ! systemctl is-failed --quiet rakazo-computer-egress.service; then
+      rules=on
+    fi
+  fi
+  case "${egress:-auto}/$rules" in
+    open/* | auto/off) warn "Bot computers can reach this host, its LAN and cloud metadata." ;;
+    restricted/off) error "Bot computers cannot start: SANDBOX_COMPUTER_EGRESS=restricted, but this host's firewall rules are not in place." ;;
+    *) return ;;
+  esac
+  if [[ -e "$EGRESS_SCRIPT" ]] && ! private_to_me "./$EGRESS_SCRIPT"; then
+    warn "Other users can change $EGRESS_SCRIPT, so it is not run with sudo."
+  else
+    fix restrict_egress:
+  fi
 }
 
 check_disk() {
@@ -309,11 +373,13 @@ run_checks() {
   fixes=()
   environment=""
   api_healthy=0
+  supervisor_container=""
   check_docker || return 0
   check_config || return 0
   check_settings
   check_services
   check_api
+  check_computers
   check_disk
 }
 
@@ -354,6 +420,8 @@ add_to_docker_group() {
 # The installer creates .env with fresh secrets, then pulls and starts everything.
 run_installer() { bash "$INSTALLER" --local; }
 
+secure_folder() { chmod o-w . && echo "Other users can no longer change $PWD."; }
+
 secure_env() { chmod 600 "$ENV_FILE" && echo "Made $ENV_FILE readable only by you."; }
 
 new_secret() {
@@ -374,8 +442,15 @@ set_address() {
 }
 
 restrict_egress() {
+  [[ -e "$EGRESS_SCRIPT" ]] || fetch "$EGRESS_SCRIPT" || return
+  private_to_me "./$EGRESS_SCRIPT" || return
   echo "Installing the computer egress firewall rules..."
   sudo bash "./$EGRESS_SCRIPT" && set_env SANDBOX_COMPUTER_EGRESS restricted
+}
+
+pull_image() {
+  echo "Downloading the bot computer image..."
+  docker pull "$1" >/dev/null && echo "Downloaded the bot computer image."
 }
 
 free_disk() {

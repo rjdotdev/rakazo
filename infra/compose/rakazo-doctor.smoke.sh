@@ -12,7 +12,8 @@ mkdir -p "$bin" "$install" "$tmp/elsewhere"
 cp "$root/rakazo" "$root/docker-compose.images.yml" "$install/"
 
 # State: daemon (Docker runs), group (this user may use it), database (a pgdata volume exists),
-# containers (one inspect row each), after-up (the rows `compose up` leaves), log (every call).
+# containers (one inspect row each), after-up (the rows `compose up` leaves), no-image (the computer
+# image is gone), egress-rules (the host firewall unit is enabled), log (every call).
 cat >"$bin/docker" <<'STUB'
 #!/usr/bin/env bash
 s="$DOCTOR_STATE"
@@ -40,20 +41,37 @@ case "$*" in
     ;;
   *" config --environment") sed -E 's/^export //' .env ;;
   *" ps --all --quiet") [[ ! -s "$s/containers" ]] || cut -d' ' -f2 "$s/containers" ;;
+  "inspect --format {{range .Config.Env}}{{println .}}{{end}} rakazo-supervisor-1")
+    printf '%s\n' "SANDBOX_SUPERVISOR_TOKEN=$DOCTOR_SUPERVISOR_TOKEN" "RAKAZO_COMPUTER_IMAGE=ghcr.io/elie222/rakazo/computer:edge"
+    ;;
   inspect*) cat "$s/containers" ;;
+  "image inspect ghcr.io/elie222/rakazo/computer:edge") [[ ! -e "$s/no-image" ]] ;;
+  "pull ghcr.io/elie222/rakazo/computer:edge") rm -f "$s/no-image" ;;
   *" up -d"*) [[ ! -e "$s/after-up" ]] || cp "$s/after-up" "$s/containers" ;;
   *" restart "* | *" logs --tail 100"*) ;;
   *) echo "unexpected docker $*" >&2; exit 99 ;;
 esac
 STUB
+# Runs only the stubs here, so a missed stub cannot reach a real command as root.
 cat >"$bin/sudo" <<'STUB'
 #!/usr/bin/env bash
 echo "sudo $*" >>"$DOCTOR_STATE/log"
-exec "$@"
+case "$1" in
+  systemctl | usermod) exec "$(dirname "$0")/$@" ;;
+  bash) [[ "$2" == ./restrict-computer-egress.sh ]] && exec "$@" ;;
+esac
+echo "sudo stub refused: $*" >&2
+exit 97
 STUB
 cat >"$bin/systemctl" <<'STUB'
 #!/usr/bin/env bash
-touch "$DOCTOR_STATE/daemon"
+case "$*" in
+  "start docker") touch "$DOCTOR_STATE/daemon" ;;
+  show-environment) [[ "${DOCTOR_SYSTEMD:-}" != none ]] ;;
+  "is-enabled --quiet rakazo-computer-egress.service") [[ -e "$DOCTOR_STATE/egress-rules" ]] ;;
+  "is-failed --quiet rakazo-computer-egress.service") false ;;
+  *) echo "unexpected systemctl $*" >&2; exit 99 ;;
+esac
 STUB
 cat >"$bin/usermod" <<'STUB'
 #!/usr/bin/env bash
@@ -66,13 +84,24 @@ STUB
 cat >"$bin/curl" <<'STUB'
 #!/usr/bin/env bash
 echo "curl $*" >>"$DOCTOR_STATE/log"
-if [[ "$*" == *"/install-images.sh -o install-images.sh.tmp" ]]; then
-  printf '#!/usr/bin/env bash\necho "installer ran in $PWD" >>"$DOCTOR_STATE/log"\n' >install-images.sh.tmp
-  exit 0
-fi
-[[ "$*" == *"http://127.0.0.1:3100/ready" ]] || exit 7
-ready='{"ok":true,"degraded":false}'
-echo "${DOCTOR_READY:-$ready}"
+case "$*" in
+  *"/install-images.sh -o install-images.sh.tmp")
+    printf '#!/usr/bin/env bash\necho "installer ran in $PWD" >>"$DOCTOR_STATE/log"\n' >install-images.sh.tmp
+    ;;
+  *"/restrict-computer-egress.sh -o restrict-computer-egress.sh.tmp")
+    printf '#!/usr/bin/env bash\necho "egress $*" >>"$DOCTOR_STATE/log"\ntouch "$DOCTOR_STATE/egress-rules"\n' \
+      >restrict-computer-egress.sh.tmp
+    ;;
+  *"http://127.0.0.1:3100/ready")
+    ready='{"ok":true,"degraded":false}'
+    echo "${DOCTOR_READY:-$ready}"
+    ;;
+  *"http://127.0.0.1:3100/internal/health")
+    health='{"ok":true,"runtime":"pi","sandbox":"docker"}'
+    echo "${DOCTOR_HEALTH:-$health}"
+    ;;
+  *) exit 7 ;;
+esac
 STUB
 cat >"$bin/df" <<'STUB'
 #!/usr/bin/env bash
@@ -90,13 +119,18 @@ worker /rakazo-worker-1 running healthy 0 0
 web /rakazo-web-1 running none 0 0"
 
 secret="0123456789abcdef0123456789abcdef-not-a-real-secret"
+export DOCTOR_SUPERVISOR_TOKEN="$secret-token"
+# Only the stubs and system folders, and a HOME of its own: a rakazo command or install of the
+# machine running this test can neither change the results nor be changed.
+test_path="$bin:/usr/bin:/bin"
+export HOME="$tmp/home"
 secrets=("POSTGRES_PASSWORD=$secret" "POSTGRES_APP_PASSWORD=$secret" "BETTER_AUTH_SECRET=$secret"
   "ENCRYPTION_KEY=$secret" "SCREEN_PROXY_SECRET=$secret-screen" "SANDBOX_SUPERVISOR_TOKEN=$secret-token")
 # A fresh state with Docker running, the given containers, and .env holding every secret plus "$@".
 setup() {
   rm -rf "$state" "$install/.env" "$install/docker-compose.override.yml"
   mkdir "$state"
-  touch "$state/daemon" "$state/log"
+  touch "$state/daemon" "$state/egress-rules" "$state/log"
   printf '%s\n' "$1" >"$state/containers"
   shift
   printf '%s\n' "${secrets[@]}" "$@" >"$install/.env"
@@ -111,7 +145,7 @@ doctor() {
   [[ "${1:-}" != --fix ]] || { args+=(--fix); shift; }
   status=0
   out="$(cd "$tmp/elsewhere" &&
-    env "$@" DOCTOR_STATE="$state" PATH="$bin:$PATH" bash "$install/rakazo" "${args[@]}" 2>&1 </dev/null)" ||
+    env "$@" DOCTOR_STATE="$state" PATH="$test_path" bash "$install/rakazo" "${args[@]}" 2>&1 </dev/null)" ||
     status=$?
   local line value
   [[ "$out" != *"$secret"* ]] || fail "printed a secret: $out"
@@ -255,25 +289,96 @@ doctor
 expect_status 0
 [[ "$out" == "Warning: http://app.example.com is not https. Put TLS in front of Rakazo." ]] || fail "http: $out"
 
-# Computer egress.
-setup "$healthy" "SANDBOX_COMPUTER_EGRESS=open"
-doctor DOCTOR_UNAME=Darwin
-expect "Warning: Bot computers can reach this host, its LAN and cloud metadata. See Restricted computer egress"
+# Computers: the provider the API actually runs.
+setup "$healthy" "SANDBOX_PROVIDER=e2b"
+doctor DOCTOR_HEALTH='{"ok":true,"sandbox":"none"}'
+expect_status 1
+expect "Error: Bots have no computers: SANDBOX_PROVIDER=e2b is missing its key or settings."
 refute "--fix"
-cat >"$install/restrict-computer-egress.sh" <<'STUB'
+doctor DOCTOR_HEALTH='{"ok":true,"sandbox":"e2b"}'
+expect_clean
+
+# The computer image, which a `docker system prune -a` removes.
+setup "$healthy"
+touch "$state/no-image"
+doctor
+expect "Error: The bot computer image is missing, so computers cannot start."
+doctor --fix
+expect "Downloaded the bot computer image."
+expect_clean
+logged "docker pull ghcr.io/elie222/rakazo/computer:edge"
+refute "$DOCTOR_SUPERVISOR_TOKEN"
+
+# Computer egress, where this Docker can enforce the host rules.
+cat >"$tmp/egress-stub" <<'STUB'
 #!/usr/bin/env bash
 echo "egress $*" >>"$DOCTOR_STATE/log"
+touch "$DOCTOR_STATE/egress-rules"
 STUB
+setup "$healthy" "SANDBOX_COMPUTER_EGRESS=open"
+cp "$tmp/egress-stub" "$install/restrict-computer-egress.sh"
+doctor
+expect "Warning: Bot computers can reach this host, its LAN and cloud metadata."
+expect "fix 1 of these"
 doctor --fix
 logged "sudo bash ./restrict-computer-egress.sh"
 expect_clean
 [[ "$(grep -c '^SANDBOX_COMPUTER_EGRESS=' "$install/.env")" == 1 && "$(env_value SANDBOX_COMPUTER_EGRESS)" == restricted ]] ||
   fail "egress setting: $(grep EGRESS "$install/.env")"
 logged " up -d --wait"
+
+# Unset (auto) without the rules is open; the script is fetched when it is not here.
+setup "$healthy"
+rm "$state/egress-rules" "$install/restrict-computer-egress.sh"
+doctor --fix
+expect "Warning: Bot computers can reach this host"
+logged "/restrict-computer-egress.sh -o restrict-computer-egress.sh.tmp"
+logged "sudo bash ./restrict-computer-egress.sh"
+expect_clean
+
+# Restricted without the rules: computers cannot start.
+setup "$healthy" "SANDBOX_COMPUTER_EGRESS=restricted"
+rm "$state/egress-rules"
+doctor
+expect_status 1
+expect "Error: Bot computers cannot start: SANDBOX_COMPUTER_EGRESS=restricted, but this host's firewall rules are not in place."
+expect "fix 1 of these"
+
+# Only a script no one else can change runs with sudo.
+chmod o+w "$install/restrict-computer-egress.sh"
+doctor --fix
+expect "Warning: Other users can change restrict-computer-egress.sh, so it is not run with sudo."
+grep -q "sudo bash" "$state/log" && fail "ran a script others can change with sudo"
 rm "$install/restrict-computer-egress.sh"
 
+# Without systemd the rules cannot be read, so unset says nothing.
+setup "$healthy"
+rm "$state/egress-rules"
+doctor DOCTOR_SYSTEMD=none
+expect_clean
+
+# Where this Docker cannot enforce them (macOS, Docker Desktop): quiet, unless set to restricted.
+setup "$healthy" "SANDBOX_COMPUTER_EGRESS=open"
+doctor DOCTOR_UNAME=Darwin
+expect_clean
+setup "$healthy" "SANDBOX_COMPUTER_EGRESS=restricted"
+doctor DOCTOR_UNAME=Darwin
+expect_status 1
+expect "Error: SANDBOX_COMPUTER_EGRESS=restricted cannot work with this Docker, so bot computers cannot start."
+refute "--fix"
+
 setup "$healthy" "SANDBOX_PROVIDER=e2b" "SANDBOX_COMPUTER_EGRESS=open"
+rm "$state/egress-rules"
 doctor
+expect_clean
+
+# A folder others can write: its Compose file and .env run through Docker as root.
+setup "$healthy"
+chmod o+w "$install"
+doctor
+expect "Error: Other users can change $install."
+doctor --fix
+expect "Other users can no longer change $install."
 expect_clean
 
 # Containers.
@@ -339,32 +444,32 @@ if script --version 2>/dev/null | grep -q util-linux; then
   setup ""
   printf '%s\n' "$healthy" >"$state/after-up"
   out="$(cd "$tmp/elsewhere" && printf 'n\n' |
-    DOCTOR_STATE="$state" PATH="$bin:$PATH" script -qec "bash '$install/rakazo' doctor" /dev/null)" || true
+    DOCTOR_STATE="$state" PATH="$test_path" script -qec "bash '$install/rakazo' doctor" /dev/null)" || true
   expect "Fix 1 of these? [Y/n]"
   refute "Starting Rakazo"
   out="$(cd "$tmp/elsewhere" && printf '\n' |
-    DOCTOR_STATE="$state" PATH="$bin:$PATH" script -qec "bash '$install/rakazo' doctor" /dev/null)" || true
+    DOCTOR_STATE="$state" PATH="$test_path" script -qec "bash '$install/rakazo' doctor" /dev/null)" || true
   expect "Starting Rakazo..."
   expect "No problems found."
 fi
 
 # logs: the last lines, followed only in a terminal so a script or agent gets them back.
 setup "$healthy"
-(cd "$tmp/elsewhere" && DOCTOR_STATE="$state" PATH="$bin:$PATH" bash "$install/rakazo" logs api worker </dev/null >/dev/null)
+(cd "$tmp/elsewhere" && DOCTOR_STATE="$state" PATH="$test_path" bash "$install/rakazo" logs api worker </dev/null >/dev/null)
 logged "-f docker-compose.images.yml logs --tail 100 api worker"
 grep -q -- "--follow" "$state/log" && fail "followed logs without a terminal"
 if script --version 2>/dev/null | grep -q util-linux; then
-  (cd "$tmp/elsewhere" && DOCTOR_STATE="$state" PATH="$bin:$PATH" script -qec "bash '$install/rakazo' logs" /dev/null >/dev/null)
+  (cd "$tmp/elsewhere" && DOCTOR_STATE="$state" PATH="$test_path" script -qec "bash '$install/rakazo' logs" /dev/null >/dev/null)
   logged "logs --tail 100 --follow"
 fi
 
 # update: fetch the newest installer next to this file and run it there.
 setup "$healthy"
-(cd "$tmp/elsewhere" && DOCTOR_STATE="$state" PATH="$bin:$PATH" bash "$install/rakazo" update </dev/null)
+(cd "$tmp/elsewhere" && DOCTOR_STATE="$state" PATH="$test_path" bash "$install/rakazo" update </dev/null)
 logged "https://raw.githubusercontent.com/elie222/rakazo/main/infra/compose/install-images.sh -o install-images.sh.tmp"
 logged "installer ran in $install"
 [[ ! -e "$install/install-images.sh.tmp" ]] || fail "left the download behind"
-(cd "$tmp/elsewhere" && RAKAZO_DOWNLOAD_BASE=https://mirror.example.com/rakazo/ DOCTOR_STATE="$state" PATH="$bin:$PATH" \
+(cd "$tmp/elsewhere" && RAKAZO_DOWNLOAD_BASE=https://mirror.example.com/rakazo/ DOCTOR_STATE="$state" PATH="$test_path" \
   bash "$install/rakazo" update </dev/null)
 logged "https://mirror.example.com/rakazo/install-images.sh -o"
 rm "$install/install-images.sh"

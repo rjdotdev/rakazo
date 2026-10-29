@@ -87,6 +87,9 @@ fail() {
   exit 1
 }
 
+# Whoever can change this folder's Compose file or .env runs anything through Docker, which is root.
+[[ -z "$(find . -maxdepth 0 -perm -002)" ]] || fail "other users can change $PWD. Run: chmod o-w $PWD"
+
 required_files=("$COMPOSE_FILE" "$ENV_EXAMPLE")
 if [[ "$offline" == true ]]; then
   for filename in "${required_files[@]}"; do
@@ -414,10 +417,12 @@ for filename in "${required_files[@]}"; do
   download "$filename"
 done
 # Puts `rakazo` on PATH: a small script, in the first writable PATH folder of these, that runs
-# this folder's copy. A same-named command that is not one of these scripts is left alone.
+# this folder's copy. A same-named command that is not one of these scripts is left alone. Only
+# root uses /usr/local/bin: other users run what is there, and this copy is only this user's.
 link_cli() {
-  local dir target
-  for dir in /usr/local/bin "$HOME/.local/bin" "$HOME/bin"; do
+  local dir target dirs=("$HOME/.local/bin" "$HOME/bin")
+  ((EUID != 0)) || dirs=(/usr/local/bin "${dirs[@]}")
+  for dir in "${dirs[@]}"; do
     [[ ":$PATH:" == *":$dir:"* && -d "$dir" && -w "$dir" ]] || continue
     target="$dir/$CLI"
     [[ ! -e "$target" ]] || grep -qx '# Rakazo command' "$target" 2>/dev/null || return 1
