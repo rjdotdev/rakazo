@@ -21,6 +21,7 @@ readonly OVERRIDE_FILE="docker-compose.override.yml"
 readonly ENV_EXAMPLE=".env.images.example"
 readonly ENV_FILE=".env"
 readonly EGRESS_SCRIPT="restrict-computer-egress.sh"
+readonly CLI="rakazo"
 
 prepare_only=false
 skip_existing=false
@@ -373,6 +374,10 @@ configure_computer_egress() {
 for filename in "${required_files[@]}"; do
   download "$filename"
 done
+# Optional: ./rakazo doctor checks this install. Setup goes on without it.
+if (trap cleanup EXIT; download "$CLI") 2>/dev/null; then
+  chmod u+x "$CLI"
+fi
 
 compose_files=(-f "$COMPOSE_FILE")
 override_present=""
@@ -407,6 +412,10 @@ else
     fail "could not pull images. Shell HTTP_PROXY often does not reach the Docker daemon. Configure daemon proxy/registry-mirrors, set image env vars to a reachable registry, or preload images then compose up with --pull never."
   fi
 fi
+start_failed() {
+  [[ ! -x "$CLI" ]] || fail "services did not start. Run ./${CLI} doctor to see why."
+  exit 1
+}
 # `--wait` without `--wait-timeout` can hang on one-shot services (Compose < 2.7)
 # or never return if a healthcheck stays red (Compose < 2.17). Prefer both flags.
 compose_up_help=$(docker compose up --help 2>/dev/null || true)
@@ -421,9 +430,9 @@ fi
 # bash 3.2 + set -u: "${arr[@]}" aborts when arr is empty.
 if grep -q -- '--wait-timeout' <<<"$compose_up_help"; then
   echo "Waiting for healthy services."
-  docker compose --env-file "$ENV_FILE" "${compose_files[@]}" up -d ${up_pull_args[@]+"${up_pull_args[@]}"} --wait --wait-timeout 300
+  docker compose --env-file "$ENV_FILE" "${compose_files[@]}" up -d ${up_pull_args[@]+"${up_pull_args[@]}"} --wait --wait-timeout 300 || start_failed
 else
-  docker compose --env-file "$ENV_FILE" "${compose_files[@]}" up -d ${up_pull_args[@]+"${up_pull_args[@]}"}
+  docker compose --env-file "$ENV_FILE" "${compose_files[@]}" up -d ${up_pull_args[@]+"${up_pull_args[@]}"} || start_failed
 fi
 
 echo "Rakazo is starting at http://127.0.0.1:5173"

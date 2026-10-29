@@ -67,6 +67,9 @@ egress and warns instead of downloading it. An explicit `SANDBOX_COMPUTER_EGRESS
 remains unchanged. See [restricted computer egress](./self-host.md#restricted-computer-egress)
 for host requirements.
 
+Copy `rakazo` too if you want [`./rakazo doctor`](./self-host.md#check-an-install); the
+installer skips it when it is missing.
+
 ## Container images
 
 After `--prepare-only`, set image overrides in `.env`. For mirrored Postgres or busybox, use

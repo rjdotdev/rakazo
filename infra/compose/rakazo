@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+# Operator commands for a published-images install, kept next to docker-compose.images.yml.
+# `./rakazo doctor` reads Docker, .env and the running containers and says what to fix. It
+# changes nothing and never prints a secret from .env.
+set -uo pipefail
+
+readonly COMPOSE_FILE="docker-compose.images.yml"
+readonly OVERRIDE_FILE="docker-compose.override.yml"
+readonly ENV_FILE=".env"
+readonly LOCAL_ORIGIN="http://127.0.0.1:5173"
+# Services that stay up. The others (migrate, data-init, computer) run once and exit.
+readonly LONG_RUNNING=" postgres supervisor api worker web "
+
+usage="Usage: ./rakazo doctor"
+case "${1:-}" in
+  -h | --help | help)
+    echo "$usage"
+    exit 0
+    ;;
+  doctor) [[ $# -eq 1 ]] || { echo "$usage" >&2; exit 2; } ;;
+  *)
+    echo "$usage" >&2
+    exit 2
+    ;;
+esac
+
+cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
+
+errors=0
+warnings=0
+error() {
+  echo "Error: $*"
+  errors=$((errors + 1))
+}
+warn() {
+  echo "Warning: $*"
+  warnings=$((warnings + 1))
+}
+
+compose=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
+start_command="docker compose -f $COMPOSE_FILE"
+if [[ -f "$OVERRIDE_FILE" ]]; then
+  compose+=(-f "$OVERRIDE_FILE")
+  start_command+=" -f $OVERRIDE_FILE"
+fi
+start_command+=" up -d"
+environment=""
+api_container=""
+
+# The value Compose resolves for a setting: the shell first, then .env.
+setting() { sed -n "s/^$1=//p" <<<"$environment" | tail -n 1; }
+logs_hint() { echo "See why: docker logs --tail 50 $1"; }
+
+check_docker() {
+  local api
+  command -v docker >/dev/null 2>&1 || { error "Docker is not installed."; return 1; }
+  docker compose version >/dev/null 2>&1 || { error "The Docker Compose plugin is not installed."; return 1; }
+  if ! api="$(docker version --format '{{.Server.APIVersion}}' 2>&1)"; then
+    case "$api" in
+      *"permission denied"*) error "This user cannot use Docker. Add it to the docker group (sudo usermod -aG docker \$USER), then sign in again." ;;
+      *) error "Docker is not running." ;;
+    esac
+    return 1
+  fi
+  # API 1.45 (Engine 26) is the first with the volume subpaths that bot homes mount.
+  if [[ "$api" =~ ^1\.([0-9]+)$ ]] && ((BASH_REMATCH[1] < 45)); then
+    error "Docker Engine 26 or newer is required."
+  fi
+}
+
+check_config() {
+  local mode out missing line
+  [[ -f "$COMPOSE_FILE" ]] || { error "Keep this file next to $COMPOSE_FILE."; return 1; }
+  [[ -f "$ENV_FILE" ]] || { error "$ENV_FILE is missing. Run bash install-images.sh to create it."; return 1; }
+  mode="$(ls -l "$ENV_FILE")"
+  [[ "${mode:4:6}" == "------" ]] || warn "Other users can read $ENV_FILE. Run: chmod 600 $ENV_FILE"
+  if ! out="$("${compose[@]}" config --quiet 2>&1)"; then
+    # Compose repeats a missing setting once per use; its message comes from the Compose file.
+    missing="$(sed -n 's/.*is missing a value: //p' <<<"$out" | sort -u)"
+    if [[ -z "$missing" ]]; then
+      error "$(head -n 1 <<<"$out")"
+    else
+      while IFS= read -r line; do error "$line."; done <<<"$missing"
+    fi
+    return 1
+  fi
+  environment="$("${compose[@]}" config --environment 2>/dev/null)"
+}
+
+check_settings() {
+  local origin auth api host
+  origin="$(setting WEB_ORIGIN)"
+  origin="${origin:-$LOCAL_ORIGIN}"
+  auth="$(setting BETTER_AUTH_URL)"
+  auth="${auth:-$LOCAL_ORIGIN}"
+  api="$(setting API_URL)"
+  api="${api:-$LOCAL_ORIGIN}"
+  if [[ "${auth%/}" != "${origin%/}" || "${api%/}" != "${origin%/}" ]]; then
+    warn "Set BETTER_AUTH_URL, WEB_ORIGIN and API_URL to the same address."
+  fi
+  host="${origin#*://}"
+  host="${host%%/*}"
+  host="${host%:*}"
+  # The web app only answers a named host it allowlists; IP addresses always pass.
+  if [[ "$host" != localhost && "$host" != \[* && "$host" =~ [A-Za-z] ]]; then
+    [[ "$(setting RAKAZO_HOST)" == "$host" ]] ||
+      error "Set RAKAZO_HOST=$host in $ENV_FILE, or the web app refuses requests for $host."
+    [[ "$origin" == https://* ]] || warn "WEB_ORIGIN is not https. Put TLS in front of Rakazo."
+  fi
+  if [[ "$(setting SANDBOX_PROVIDER)" =~ ^(docker)?$ && "$(setting SANDBOX_COMPUTER_EGRESS)" == open ]]; then
+    warn "Bot computers can reach this host, its LAN and cloud metadata. See Restricted computer egress in docs/self-host.md."
+  fi
+}
+
+check_services() {
+  local ids rows service row name state health restarts code
+  if ! ids="$("${compose[@]}" ps --all --quiet 2>/dev/null)"; then
+    error "Could not list Rakazo's containers."
+    return
+  fi
+  if [[ -z "$ids" ]]; then
+    error "Rakazo is not running. Start it: $start_command"
+    return
+  fi
+  # shellcheck disable=SC2086 # one container ID per word
+  rows="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}} {{.Name}} {{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} {{.RestartCount}} {{.State.ExitCode}}' $ids 2>/dev/null)" || {
+    error "Could not inspect Rakazo's containers."
+    return
+  }
+  for service in $LONG_RUNNING; do
+    # During a rolling replacement one healthy container is enough.
+    row="$(grep -E "^$service [^ ]+ running (healthy|none) " <<<"$rows" | head -n 1)"
+    if [[ -n "$row" ]]; then
+      [[ "$service" != api ]] || api_container="$(awk '{ print substr($2, 2) }' <<<"$row")"
+      continue
+    fi
+    row="$(grep "^$service " <<<"$rows" | head -n 1)"
+    if [[ -z "$row" ]]; then
+      error "$service is missing. Start it: $start_command"
+      continue
+    fi
+    read -r _ name state health restarts _ <<<"$row"
+    name="${name#/}"
+    case "$state/$health" in
+      created/*) error "$service has not started." ;;
+      running/unhealthy) error "$service is unhealthy. $(logs_hint "$name")" ;;
+      running/starting)
+        if ((restarts == 0)); then
+          warn "$service is still starting."
+        else
+          error "$service keeps restarting. $(logs_hint "$name")"
+        fi
+        ;;
+      restarting/*) error "$service keeps restarting. $(logs_hint "$name")" ;;
+      # Each of these restarts on failure, so one that stays down was stopped.
+      *) error "$service is not running. Start it: $start_command" ;;
+    esac
+  done
+  while read -r service name state _ _ code; do
+    [[ "$LONG_RUNNING" == *" $service "* || "$state" != exited || "$code" == 0 ]] ||
+      error "$service failed. $(logs_hint "${name#/}")"
+  done <<<"$rows"
+}
+
+# The API's own readiness: its database login works and secret storage is whole.
+check_api() {
+  local port body
+  [[ -n "$api_container" ]] && command -v curl >/dev/null 2>&1 || return 0
+  port="$(setting RAKAZO_API_PORT)"
+  if ! body="$(curl -sS -m 5 "http://127.0.0.1:${port:-3100}/ready" 2>/dev/null)"; then
+    error "The API does not answer on 127.0.0.1:${port:-3100}."
+    return
+  fi
+  case "$body" in
+    *'"database":"unreachable"'*) error "The API cannot reach its database. $(logs_hint "$api_container")" ;;
+    *'"degraded":true'*) warn "Secret storage is degraded. $(logs_hint "$api_container")" ;;
+  esac
+}
+
+check_disk() {
+  local root free_kb
+  root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null)"
+  # Docker Desktop keeps it inside its VM, out of reach from here.
+  [[ -n "$root" && -d "$root" ]] || return 0
+  free_kb="$(df -Pk "$root" 2>/dev/null | awk 'NR == 2 { print $4 }')"
+  [[ "$free_kb" =~ ^[0-9]+$ ]] && ((free_kb < 5 * 1024 * 1024)) && warn "Docker has less than 5 GiB of free disk."
+  return 0
+}
+
+if check_docker && check_config; then
+  check_settings
+  check_services
+  check_api
+  check_disk
+fi
+((errors + warnings > 0)) || echo "No problems found."
+((errors == 0))

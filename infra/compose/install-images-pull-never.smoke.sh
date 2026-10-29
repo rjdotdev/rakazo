@@ -86,7 +86,10 @@ SCREEN_PROXY_SECRET=test-screen-secret
 SANDBOX_SUPERVISOR_TOKEN=test-supervisor-token
 EOF
     ;;
-  pull|up)
+  pull)
+    ;;
+  up)
+    [[ -z "${STUB_UP_FAIL:-}" ]]
     ;;
   *)
     echo "STUB: unexpected compose verb ${verb:-none} $*" >&2
@@ -249,6 +252,21 @@ set -e
 [[ "$default_out" != *"unbound variable"* ]] || fail "empty array expansion aborted: $default_out"
 has_compose_pull "$tmp/default" || fail "default install should run compose pull"
 grep -q 'VERB=up' "$tmp/default/docker.log" || fail "default install should run compose up"
+[[ -x "$tmp/default/cwd/rakazo" ]] || fail "default install did not download rakazo"
+
+# A failed start names the doctor, but only where it was downloaded.
+set +e
+export STUB_UP_FAIL=1
+failed_out="$(run_install "$tmp/default" 2>&1)"
+failed_code=$?
+no_cli_out="$(run_install "$tmp/offline" --offline 2>&1)"
+no_cli_code=$?
+unset STUB_UP_FAIL
+set -e
+[[ "$failed_code" -ne 0 && "$failed_out" == *"Run ./rakazo doctor to see why."* ]] ||
+  fail "a failed start did not name the doctor: $failed_out"
+[[ "$no_cli_code" -ne 0 && "$no_cli_out" != *"rakazo doctor"* ]] ||
+  fail "a failed start named a doctor that is not there: $no_cli_out"
 
 # A setting the Compose file does not name is reported instead of silently dropped.
 setup_work "$tmp/unpassed"

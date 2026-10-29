@@ -80,6 +80,19 @@ the local Docker computer. For in-stack Caddy plus remote E2B computers, use the
 [production Compose](#public-single-vm-deployment) path and `infra/compose/Caddyfile.prod`
 instead of this host proxy.
 
+### Check an install
+
+The installer also downloads `rakazo` next to the Compose file. When something is wrong, run:
+
+```bash
+./rakazo doctor
+```
+
+It checks Docker, `.env`, the public address settings, computer egress, every container's
+health, the API's database login and free disk, then names each problem with the command or
+setting that fixes it. It changes nothing and never prints a secret. It exits nonzero when it
+finds an error, so monitoring can run it too; warnings alone exit zero.
+
 ### Restricted networks / mirror downloads
 
 If the installer, Compose downloads, or image pulls are blocked, use the
