@@ -1,5 +1,5 @@
 import { Trans } from "@lingui/react/macro";
-import { Button } from "@rakazo/ui-web";
+import { Button, SectionHeading } from "@rakazo/ui-web";
 import { PageTileIcon } from "./page-icon";
 
 /** Why a page is not showing where it should, and what the user can do next. */
@@ -18,7 +18,9 @@ export function PageNotice({
     <div role="alert" className="absolute inset-0 grid place-items-center bg-card px-6 text-center">
       <div className="flex max-w-[360px] flex-col items-center gap-3">
         <PageTileIcon />
-        <h2 className="text-[17px] leading-6 font-medium text-foreground">{title}</h2>
+        <SectionHeading as="h2" className="text-[17px] leading-6">
+          {title}
+        </SectionHeading>
         <p className="text-[14px] leading-5 text-muted-foreground">{detail}</p>
         <div className="mt-1 flex gap-2">
           {onRetry ? (

@@ -8,11 +8,13 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  Input,
+  ListSearchInput,
   SectionHeading,
   Spinner,
 } from "@rakazo/ui-web";
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Globe, MoreHorizontal, Search } from "lucide-react";
+import { Globe, MoreHorizontal } from "lucide-react";
 import { useDeferredValue, useState } from "react";
 import { pageMutationOptions } from "../../lib/page-actions";
 import { useOpenPage } from "../../lib/pages";
@@ -118,8 +120,7 @@ function OwnerPages({ botId, groupId }: { botId?: string; groupId?: string }) {
           <span className="grid size-8 shrink-0 place-items-center rounded-[8px] bg-muted">
             <PageIcon className="h-5 w-4" />
           </span>
-          <input
-            // biome-ignore lint/a11y/noAutofocus: the field appears because Rename was chosen.
+          <Input
             autoFocus
             aria-label={t`Page title`}
             value={renaming.draft}
@@ -134,17 +135,18 @@ function OwnerPages({ botId, groupId }: { botId?: string; groupId?: string }) {
                 setRenaming(null);
               }
             }}
-            className="h-8 min-w-0 flex-1 rounded-[8px] bg-background px-2 text-[14px] text-foreground ring-1 ring-ring outline-none"
+            className="h-8 min-w-0 flex-1 rounded-[8px] border-0 bg-background px-2 py-0 text-[14px] md:text-[14px] ring-1 ring-ring focus-visible:ring-1"
           />
         </div>
       ) : (
-        <button
-          type="button"
+        <Button
+          variant="ghost"
           onClick={() => openPage(page.id)}
-          className="flex min-w-0 flex-1 items-center gap-3 rounded-[10px] px-2 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="h-auto min-w-0 flex-1 justify-start gap-3 rounded-[10px] border-0 px-2 py-2 text-left font-normal hover:bg-transparent focus-visible:ring-2 focus-visible:ring-ring active:not-aria-[haspopup]:translate-y-0"
         >
           <span className="grid size-8 shrink-0 place-items-center rounded-[8px] bg-muted text-foreground">
-            <PageIcon className="h-5 w-4" />
+            {/* size-4 keeps the Button's own icon size off; h-5 then restores the page shape. */}
+            <PageIcon className="size-4 h-5" />
           </span>
           <span className="flex min-w-0 flex-1 flex-col">
             <span className="truncate text-[14px] leading-5 text-foreground" dir="auto">
@@ -161,7 +163,7 @@ function OwnerPages({ botId, groupId }: { botId?: string; groupId?: string }) {
               <span>{formatRelativeTime(page.updatedAt)}</span>
             </span>
           </span>
-        </button>
+        </Button>
       )}
       <DropdownMenu>
         <DropdownMenuTrigger
@@ -199,17 +201,12 @@ function OwnerPages({ botId, groupId }: { botId?: string; groupId?: string }) {
   return (
     <div data-testid="bot-pages" className="flex flex-col gap-3">
       {searchable ? (
-        <label className="flex h-9 items-center gap-2 rounded-[10px] bg-muted px-2.5 text-muted-foreground focus-within:ring-2 focus-within:ring-ring">
-          <Search aria-hidden="true" className="size-4 shrink-0" />
-          <input
-            type="search"
-            aria-label={t`Find a page`}
-            placeholder={t`Find a page`}
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            className="min-w-0 flex-1 bg-transparent text-[14px] text-foreground outline-none placeholder:text-muted-foreground"
-          />
-        </label>
+        <ListSearchInput
+          query={search}
+          setQuery={setSearch}
+          label={t`Find a page`}
+          placeholder={t`Find a page`}
+        />
       ) : null}
       {rename.isError ? (
         <p role="alert" className="px-2 text-[12px] text-destructive">

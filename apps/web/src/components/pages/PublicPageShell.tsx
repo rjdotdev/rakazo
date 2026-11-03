@@ -1,4 +1,5 @@
 import { Trans, useLingui } from "@lingui/react/macro";
+import { Button } from "@rakazo/ui-web";
 import { Check, Link } from "lucide-react";
 import { useState } from "react";
 import { useCopyText } from "../../lib/copy-text";
@@ -31,9 +32,9 @@ export function PublicPageShell({ title, document }: { title: string; document: 
         </a>
         <h1 className="sr-only">{title}</h1>
         <nav aria-label={t`Page actions`} className="flex shrink-0 items-center gap-1.5">
-          <button
-            type="button"
-            className={`${ACTION} ${copied ? "text-success" : ""}`}
+          <Button
+            variant="ghost"
+            className={`${ACTION} ${copied ? "text-success hover:text-success" : ""}`}
             onClick={() => copy(window.location.href)}
           >
             {copied ? (
@@ -44,7 +45,7 @@ export function PublicPageShell({ title, document }: { title: string; document: 
             <span className="max-[560px]:sr-only">
               {copied ? <Trans>Copied</Trans> : <Trans>Copy link</Trans>}
             </span>
-          </button>
+          </Button>
           <DownloadPdfButton className={ACTION} labelClassName="max-[560px]:sr-only" />
           <span role="status" className="sr-only">
             {copied ? t`Link copied` : ""}

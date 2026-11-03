@@ -47,4 +47,14 @@ describe("index.html theme bootstrap", () => {
     expect(css).toMatch(/:root\[data-os="mac"\] \{\s*--font-weight-normal: 420;\s*\}/);
     expect(read("../styles.css")).toContain("font-weight: var(--font-weight-normal);");
   });
+
+  it("prints a page on the shared white, whatever the app's theme", () => {
+    expect([webDarkTokens.faviconPlate, webLightTokens.faviconPlate]).toEqual([
+      "#FFFFFF",
+      "#FFFFFF",
+    ]);
+    const print = read("../styles.css").split("@media print")[1] ?? "";
+    expect(print).toContain("background: var(--favicon-plate);");
+    expect(print).not.toMatch(/#[0-9a-f]{3,8}\b/i);
+  });
 });

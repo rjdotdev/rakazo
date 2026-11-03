@@ -84,6 +84,7 @@ test("a bot's page shows in its reply, opens full screen, is shared by link and 
     pageFrame(page, title).getByRole("heading", { name: "Test dashboard", level: 1 }),
   ).toBeVisible();
   await captureScreenshot(page, testInfo, "page-full-screen");
+  await expect(view.getByRole("button", { name: title })).toHaveCSS("font-size", "14px");
   // Opening lands on Close, and Tab reaches the title, Download PDF and Share before anything in
   // the page.
   await expect(view.getByRole("button", { name: "Close page" })).toBeFocused();
@@ -116,6 +117,9 @@ test("a bot's page shows in its reply, opens full screen, is shared by link and 
     level: 1,
   });
   await expect(printedHeading).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => getComputedStyle(document.body).backgroundColor))
+    .toBe("rgb(255, 255, 255)");
   await expect
     .poll(() => printedHeading.evaluate((heading) => getComputedStyle(heading).color))
     .toMatch(/^rgb\((\d|[1-9]\d), (\d|[1-9]\d), (\d|[1-9]\d)\)$/);
@@ -191,6 +195,15 @@ test("a bot's page shows in its reply, opens full screen, is shared by link and 
   });
   await share.getByRole("button", { name: "Copy link" }).click();
   await expect(share.getByRole("button", { name: "Copied" })).toBeVisible();
+  // Still green under the pointer that just clicked it.
+  const success = await page.evaluate(() => {
+    const probe = document.body.appendChild(document.createElement("span"));
+    probe.style.color = "var(--success)";
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  });
+  await expect(share.getByRole("button", { name: "Copied" })).toHaveCSS("color", success);
   await expect(share.getByRole("status")).toHaveText("Link copied");
   await captureScreenshot(page, testInfo, "page-share-copied");
   const restore = () =>
@@ -256,6 +269,7 @@ test("a bot's page shows in its reply, opens full screen, is shared by link and 
   });
   await outside.getByRole("button", { name: "Copy link" }).click();
   await expect(outside.getByRole("button", { name: "Copied" })).toBeVisible();
+  await expect(outside.getByRole("button", { name: "Copied" })).toHaveCSS("color", success);
   expect(
     await outside.evaluate(() =>
       (window as unknown as { realClipboard: Clipboard }).realClipboard.readText(),
@@ -632,11 +646,11 @@ test("a page's failures, a deleted page's card, and the Library's Share, search 
   await openBotPanelTab(page, "Pages");
   await expect(library.getByRole("listitem")).toHaveCount(8);
   await expect(library.getByRole("button", { name: "Show more" })).toBeHidden();
-  await library.getByRole("searchbox", { name: "Find a page" }).fill("sev");
+  await library.getByRole("textbox", { name: "Find a page" }).fill("sev");
   await expect(library.getByRole("listitem")).toHaveCount(1);
-  await library.getByRole("searchbox", { name: "Find a page" }).fill("nothing like it");
+  await library.getByRole("textbox", { name: "Find a page" }).fill("nothing like it");
   await expect(library.getByText("No pages match “nothing like it”.")).toBeVisible();
-  await library.getByRole("searchbox", { name: "Find a page" }).fill("");
+  await library.getByRole("textbox", { name: "Find a page" }).fill("");
 
   // Rename is in each page's menu, on every screen size.
   await library.getByRole("button", { name: "Actions for Alpha" }).click();

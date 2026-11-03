@@ -1,4 +1,5 @@
 import { Trans, useLingui } from "@lingui/react/macro";
+import { Button } from "@rakazo/ui-web";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { formatRelativeTime } from "../../lib/relative-time";
 import { PageFrame } from "./PageFrame";
@@ -183,11 +184,11 @@ export function PageCard({
         </div>
       </div>
       {onOpen ? (
-        <button
-          type="button"
+        <Button
+          variant="text"
           aria-label={t`Open ${title}`}
           onClick={onOpen}
-          className="absolute inset-0 rounded-[24px] outline-none"
+          className="absolute inset-0 h-auto rounded-[24px] focus-visible:border-transparent focus-visible:ring-0 active:not-aria-[haspopup]:translate-y-0"
         />
       ) : null}
     </div>

@@ -117,5 +117,7 @@ it("stops pulsing once its page can't be read", async () => {
   expect(document.body.textContent).toContain("Plan");
   // A preview that cannot load says so rather than leaving a still outline.
   expect(document.body.textContent).toContain("This page couldn't load");
+  // Opening the card is the shared Button, not a hand-made one.
+  expect(document.querySelector('[aria-label^="Open"]')?.getAttribute("data-slot")).toBe("button");
   act(() => root.unmount());
 });

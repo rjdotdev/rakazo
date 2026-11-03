@@ -2,6 +2,10 @@ import { Trans, useLingui } from "@lingui/react/macro";
 import type { PageVisibility } from "@rakazo/contracts";
 import { accountDisplay } from "@rakazo/core";
 import {
+  Button,
+  buttonVariants,
+  cn,
+  Input,
   Popover,
   PopoverContent,
   PopoverTitle,
@@ -170,17 +174,22 @@ export function SharePopover({
         {shared && shareUrl !== null ? (
           <div className="mt-0.5 flex flex-col gap-2 px-4">
             <div className="flex gap-2">
-              <button
-                type="button"
-                className={`${LINK_PILL} ${copied ? "text-success" : ""}`}
+              <Button
+                variant="ghost"
+                className={`${LINK_PILL} ${copied ? "text-success hover:text-success" : ""}`}
                 onClick={() => copy(shareUrl)}
               >
                 {copied ? <Check className="size-[14px]" strokeWidth={1.8} /> : <CopyGlyph />}
                 <span className="truncate">
                   {copied ? <Trans>Copied</Trans> : <Trans>Copy link</Trans>}
                 </span>
-              </button>
-              <a href={shareUrl} target="_blank" rel="noopener noreferrer" className={LINK_PILL}>
+              </Button>
+              <a
+                href={shareUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={cn(buttonVariants({ variant: "ghost" }), LINK_PILL)}
+              >
                 <ArrowUpRight className="size-4" strokeWidth={1.6} />
                 <span className="truncate">
                   <Trans>Open link</Trans>
@@ -207,18 +216,19 @@ export function SharePopover({
 export function ManualCopy({ url }: { url: string }) {
   const { t } = useLingui();
   return (
+    // biome-ignore lint/a11y/noLabelWithoutControl: the Input inside is the control.
     <label className="flex flex-col gap-1 text-[12px] leading-4 text-foreground/70">
       <span role="alert">
         <Trans>Couldn't copy. Select the link and copy it.</Trans>
       </span>
-      <input
+      <Input
         readOnly
         value={url}
         aria-label={t`Page link`}
-        // biome-ignore lint/a11y/noAutofocus: shown only once copying failed, to copy by hand
+        // Shown only once copying failed, to copy by hand.
         autoFocus
         onFocus={(event) => event.currentTarget.select()}
-        className="h-8 w-full min-w-0 rounded-[8px] bg-foreground/[0.04] px-2.5 text-[13px] text-foreground ring-[0.5px] ring-border outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="h-8 w-full min-w-0 rounded-[8px] border-0 bg-foreground/[0.04] px-2.5 text-[13px] md:text-[13px] text-foreground ring-[0.5px] ring-border outline-none focus-visible:ring-2 focus-visible:ring-ring"
       />
     </label>
   );

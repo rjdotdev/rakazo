@@ -1,7 +1,7 @@
 import type { PageVisibility } from "@rakazo/contracts";
 import { accountDisplay } from "@rakazo/core";
 import * as Clipboard from "expo-clipboard";
-import { useLocalSearchParams } from "expo-router";
+import { Stack, useLocalSearchParams } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
 import { useCallback, useEffect, useReducer, useState } from "react";
 import {
@@ -104,9 +104,7 @@ export default function PageShareScreen() {
     ) : null;
   return (
     <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={styles.content}>
-      <Text numberOfLines={1} style={[styles.heading, { color: tokens.foreground }]}>
-        {t("Share “{title}”", { title: loaded.title })}
-      </Text>
+      <Stack.Screen options={{ title: t("Share “{title}”", { title: loaded.title }) }} />
       <SettingsGroup>
         <SettingsRow
           key="owner"
@@ -235,14 +233,6 @@ function Avatar({ owner }: { owner: ReturnType<typeof accountDisplay> }) {
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
   content: { paddingTop: 16, paddingBottom: 24 },
-  heading: {
-    paddingHorizontal: 20,
-    paddingBottom: 4,
-    fontSize: 16,
-    lineHeight: 22,
-    fontWeight: "500",
-    letterSpacing: -0.44,
-  },
   error: { paddingHorizontal: 20, fontSize: 12, lineHeight: 16 },
   avatar: {
     width: 32,

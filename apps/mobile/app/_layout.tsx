@@ -463,7 +463,7 @@ function LayoutContent() {
                     <Stack.Screen
                       name="page-share"
                       options={{
-                        headerShown: false,
+                        title: t("Share"),
                         presentation: "formSheet",
                         sheetAllowedDetents: [0.6, 1],
                         sheetGrabberVisible: true,

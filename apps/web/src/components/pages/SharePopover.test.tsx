@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
-import { SharePopover } from "./SharePopover";
+import { ManualCopy, SharePopover } from "./SharePopover";
 
 vi.mock("@lingui/react/macro", () => ({
   useLingui: () => ({ t: String.raw }),
@@ -68,5 +68,38 @@ it("says under a choice only what its title does not", async () => {
     "Only youThe shared link stops working",
     "Anyone with the linkCan view without signing in",
   ]);
+  await act(async () => root.unmount());
+});
+
+it("builds its link actions and the hand-copy field from the shared kit", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const root = createRoot(document.body.appendChild(document.createElement("div")));
+  await act(async () =>
+    root.render(
+      <>
+        <SharePopover
+          title="Plan"
+          owner={{ name: "RJ", image: null }}
+          visibility="link"
+          shareUrl="https://rakazo.example/p/1"
+          open
+          onOpenChange={() => {}}
+          onVisibilityChange={() => {}}
+        />
+        <ManualCopy url="https://rakazo.example/p/1" />
+      </>,
+    ),
+  );
+  const share = document.querySelector('[data-testid="page-share"]');
+  const copy = [...(share?.querySelectorAll("button") ?? [])].find(
+    (button) => button.textContent === "Copy link",
+  );
+  expect(copy?.dataset.slot).toBe("button");
+  expect(share?.querySelector('a[href="https://rakazo.example/p/1"]')?.className).toContain(
+    "group/button",
+  );
+  expect(document.querySelector('input[aria-label="Page link"]')?.getAttribute("data-slot")).toBe(
+    "input",
+  );
   await act(async () => root.unmount());
 });

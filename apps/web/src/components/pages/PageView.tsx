@@ -1,6 +1,6 @@
 import { useLingui } from "@lingui/react/macro";
 import { PageIcon } from "@rakazo/chat-ui/web";
-import { Dialog, DialogClose, DialogContent, DialogTitle } from "@rakazo/ui-web";
+import { Button, Dialog, DialogClose, DialogContent, DialogTitle, Input } from "@rakazo/ui-web";
 import { Pencil, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -202,9 +202,8 @@ function TitlePill({ title, onRename }: { title: string; onRename?: (title: stri
     return (
       <div className={`${pill} bg-card ring-1 ring-ring`}>
         <PageIcon className="h-5 w-4 shrink-0" />
-        <input
+        <Input
           ref={input}
-          // biome-ignore lint/a11y/noAutofocus: the field appears because the title was clicked.
           autoFocus
           aria-label={t`Page title`}
           value={draft}
@@ -218,24 +217,26 @@ function TitlePill({ title, onRename }: { title: string; onRename?: (title: stri
               setDraft(null);
             }
           }}
-          className="w-[min(60vw,420px)] min-w-0 bg-transparent outline-none"
+          className="h-auto w-[min(60vw,420px)] min-w-0 rounded-none border-0 bg-transparent p-0 text-[14px] md:text-[14px] focus-visible:ring-0"
         />
       </div>
     );
   }
   return (
     <DialogTitle
+      // On the title, not the Button, so the pill's size replaces the dialog title's own.
+      className={`group/title ${pill} h-11 justify-start border-0 bg-card hover:bg-foreground/[0.04] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring active:not-aria-[haspopup]:translate-y-0 disabled:pointer-events-auto disabled:cursor-default disabled:opacity-100 disabled:hover:bg-transparent`}
       render={
-        <button
-          type="button"
+        <Button
+          variant="ghost"
           disabled={!onRename}
           onClick={() => setDraft(title)}
           title={onRename ? t`Rename` : undefined}
-          className={`group/title ${pill} bg-card outline-none hover:bg-foreground/[0.04] focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:hover:bg-transparent`}
         />
       }
     >
-      <PageIcon className="h-5 w-4 shrink-0" />
+      {/* size-4 keeps the Button's own icon size off; h-5 then restores the page shape. */}
+      <PageIcon className="size-4 h-5 shrink-0" />
       <span className="truncate">{title}</span>
       {onRename ? (
         <Pencil

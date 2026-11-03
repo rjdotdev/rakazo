@@ -124,5 +124,6 @@ it("announces why a page is not showing", async () => {
   expect(document.querySelector('[role="alert"]')?.textContent).toContain(
     "This page couldn't load",
   );
+  expect(document.querySelector("h2")?.getAttribute("data-slot")).toBe("section-heading");
   root.unmount();
 });

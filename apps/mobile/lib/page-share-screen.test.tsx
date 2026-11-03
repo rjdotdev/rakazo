@@ -11,6 +11,7 @@ const host = vi.hoisted(() => ({
   readFails: false,
   owner: { name: "RJ", image: null as string | null },
   sent: [] as string[],
+  header: undefined as string | undefined,
 }));
 
 vi.mock("react-native", () => ({
@@ -25,7 +26,15 @@ vi.mock("react-native", () => ({
 }));
 vi.mock("expo-clipboard", () => ({ setStringAsync: async () => true }));
 vi.mock("expo-web-browser", () => ({ openBrowserAsync: async () => undefined }));
-vi.mock("expo-router", () => ({ useLocalSearchParams: () => ({ pageId: "page-1" }) }));
+vi.mock("expo-router", () => ({
+  useLocalSearchParams: () => ({ pageId: "page-1" }),
+  Stack: {
+    Screen: ({ options }: { options?: { title?: string } }) => {
+      host.header = options?.title;
+      return null;
+    },
+  },
+}));
 vi.mock("../components/native-symbol", () => ({
   NativeSymbol: ({ ios }: { ios: string }) => createElement("i", { "data-symbol": ios }),
 }));
@@ -113,6 +122,9 @@ async function sheet() {
 it("shows what the server has after a lost answer, unknown if it can't say, and can always turn the link off", async () => {
   host.server = { visibility: "private", shareUrl: null };
   const { root, row, press, checked, text } = await sheet();
+  // The page's name is the sheet's own native title, not text drawn under it.
+  expect(host.header).toBe("Share “Plan”");
+  expect(text()).not.toContain("Share “Plan”");
   expect(checked()).toEqual(["Only you"]);
   // A choice says only what its title does not.
   expect([row("Only you")?.dataset.detail, row("Anyone with the link")?.dataset.detail]).toEqual([
