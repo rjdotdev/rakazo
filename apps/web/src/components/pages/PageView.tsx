@@ -129,6 +129,7 @@ export function PageView({
           >
             {drawn && !stalled && notice === null ? (
               <DownloadPdfButton
+                size="icon"
                 className={control}
                 iconClassName={compact ? "size-5" : "size-[18px]"}
                 labelClassName="sr-only"

@@ -650,7 +650,7 @@ describePostgres("account import (PostgreSQL)", () => {
     });
   });
 
-  it("refuses a page with no version, a source that cannot open or a repeated version, leaving nothing behind", async () => {
+  it("refuses a page with no version, a source that cannot open, a repeated version or a version of something else, leaving nothing behind", async () => {
     const before = await ownedSpaceIds();
     for (const records of [
       pageRecords([]),
@@ -661,6 +661,10 @@ describePostgres("account import (PostgreSQL)", () => {
       // The same version twice, under different ids.
       pageRecords([1, 1]).map((record, index) =>
         record.type === "page_version" ? { ...record, id: `src-page-copy-${index}` } : record,
+      ),
+      // A version naming a record that is not a page.
+      pageRecords([1]).map((record) =>
+        record.type === "page_version" ? { ...record, pageId: "src-bot-parent" } : record,
       ),
     ]) {
       await expect(runImport(archive(records))).rejects.toBeInstanceOf(AccountImportError);

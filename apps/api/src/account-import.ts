@@ -628,7 +628,8 @@ class AccountImporter implements ArchiveSink {
         const key = `${record.pageId}:${record.version}`;
         if (space.seenPageVersions.has(key)) throw unreadable();
         space.seenPageVersions.add(key);
-        const newest = space.pageVersions.get(record.pageId)!;
+        const newest = space.pageVersions.get(record.pageId);
+        if (newest === undefined) throw missingRecord();
         space.pageVersions.set(record.pageId, Math.max(newest, record.version));
         await prisma.pageVersion.create({
           data: {

@@ -1,4 +1,5 @@
 import { Trans, useLingui } from "@lingui/react/macro";
+import { Button } from "@rakazo/ui-web";
 import { Download } from "lucide-react";
 
 /**
@@ -9,15 +10,18 @@ export function DownloadPdfButton({
   className,
   iconClassName = "size-4",
   labelClassName,
+  size,
 }: {
   className: string;
   iconClassName?: string;
   labelClassName?: string;
+  size?: "default" | "icon";
 }) {
   const { t } = useLingui();
   return (
-    <button
-      type="button"
+    <Button
+      variant="ghost"
+      size={size}
       className={className}
       title={t`Opens your browser's print dialog. Choose Save as PDF as the destination.`}
       onClick={() => window.print()}
@@ -26,6 +30,6 @@ export function DownloadPdfButton({
       <span className={labelClassName}>
         <Trans>Download PDF</Trans>
       </span>
-    </button>
+    </Button>
   );
 }
