@@ -568,6 +568,63 @@ describePages("pages", () => {
     expect(await secrets()).toBe(0);
   });
 
+  it("keeps a page private when a turn-on that began earlier lands after it was turned off", async () => {
+    const cookie = await signup(app, `pages-late-${stamp}@rakazo.test`, "Late Owner");
+    const userId = (await me(app, cookie)).id;
+    const bot = await createBot(app, cookie, "Late");
+    await sendAndWait(app, cookie, bot.id, {
+      text: `call save_page with ${JSON.stringify({ title: "Late", source: page("Late") })}`,
+    });
+    const pageId = (await lastResult(bot.id))!.pageId as string;
+    const share = (visibility: "private" | "link") =>
+      rpc<{ visibility: string; shareUrl: string | null }>(app, cookie, "pages/setVisibility", {
+        pageId,
+        visibility,
+      });
+    // The turn-on has read the page and is sealing its token when the owner turns the page off.
+    let sealing!: () => void;
+    const paused = new Promise<void>((resolve) => {
+      sealing = resolve;
+    });
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const realPut = EncryptedSecretStore.prototype.put;
+    const put = vi
+      .spyOn(EncryptedSecretStore.prototype, "put")
+      .mockImplementationOnce(async function (this: EncryptedSecretStore, ...args) {
+        const record = await realPut.apply(this, args);
+        sealing();
+        await released;
+        return record;
+      });
+    const forget = vi.spyOn(EncryptedSecretStore.prototype, "delete");
+    try {
+      const linking = share("link");
+      await paused;
+      expect(await share("private")).toEqual({ visibility: "private", shareUrl: null });
+      release();
+      await expect(linking).rejects.toThrow(/sharing changed/);
+      // The owner's last answer was off, so no link works and the late token left the store.
+      expect(
+        await db().page.findUnique({
+          where: { id: pageId },
+          select: { visibility: true, shareTokenHash: true, shareSecretId: true },
+        }),
+      ).toEqual({ visibility: "private", shareTokenHash: null, shareSecretId: null });
+      expect(await db().secret.count({ where: { kind: "page_share", userId } })).toBe(0);
+      const sealed = await put.mock.results[0]!.value;
+      expect(forget.mock.calls.map(([ref]) => ref)).toContain(sealed.ciphertext);
+    } finally {
+      release();
+      put.mockRestore();
+      forget.mockRestore();
+    }
+    // Turning it on again afterwards still gives a working link.
+    expect((await share("link")).shareUrl).toEqual(expect.any(String));
+  });
+
   it("deletes a deleted bot's own pages and their links, and leaves its group's pages", async () => {
     const cookie = await signup(app, `pages-bot-gone-${stamp}@rakazo.test`, "Bot Owner");
     const userId = (await me(app, cookie)).id;

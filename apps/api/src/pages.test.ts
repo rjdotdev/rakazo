@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { getPage, removePage, setPageVisibility } from "./pages.js";
 
-type Row = { id: string; title: string; visibility: string; shareSecretId: string | null };
+type Row = {
+  id: string;
+  title: string;
+  visibility: string;
+  shareSecretId: string | null;
+  shareRevision: number;
+};
 
 /** An in-memory page and its secrets, with transactions that roll back on a throw. */
 function fakeDeps(hooks: { onUpdate?: (attempt: number) => void } = {}) {
@@ -10,6 +16,7 @@ function fakeDeps(hooks: { onUpdate?: (attempt: number) => void } = {}) {
     title: "Plan",
     visibility: "private",
     shareSecretId: null,
+    shareRevision: 0,
   };
   let secrets = new Map<string, { id: string; ciphertext: string }>();
   const tokens = new Map<string, string>();
@@ -32,11 +39,24 @@ function fakeDeps(hooks: { onUpdate?: (attempt: number) => void } = {}) {
   };
   const tx = {
     page: {
-      findUnique: async () => (page ? { shareSecretId: page.shareSecretId } : null),
-      updateMany: async ({ where, data }: { where: Row; data: Partial<Row> }) => {
+      findUnique: async () =>
+        page ? { shareSecretId: page.shareSecretId, shareRevision: page.shareRevision } : null,
+      updateMany: async ({
+        where,
+        data,
+      }: {
+        where: Row;
+        data: Partial<Omit<Row, "shareRevision">> & { shareRevision?: { increment: number } };
+      }) => {
         hooks.onUpdate?.(updates++);
         if (!page || page.shareSecretId !== where.shareSecretId) return { count: 0 };
-        page = { ...page, ...data };
+        if (page.shareRevision !== where.shareRevision) return { count: 0 };
+        const { shareRevision, ...rest } = data;
+        page = {
+          ...page,
+          ...rest,
+          shareRevision: page.shareRevision + (shareRevision?.increment ?? 0),
+        };
         return { count: 1 };
       },
       delete: async () => {

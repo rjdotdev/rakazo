@@ -407,6 +407,39 @@ describePostgres("account export (PostgreSQL)", () => {
     }
   });
 
+  it("leaves out a page deleted between its row and its versions being read", async () => {
+    const doomed = await runAsSystem("test fixture", () =>
+      prisma.page.create({
+        data: {
+          spaceId: ownedSpace,
+          userId: exporter,
+          title: "Scratch",
+          versions: { create: { version: 1, title: "Scratch", source: "", code: "" } },
+        },
+      }),
+    );
+    const source = await readAccountExport(prisma, exporter);
+    const owned = source.spaces.find((space) => space.id === ownedSpace)!;
+    const pages: string[] = [];
+    const versioned = new Set<string>();
+    try {
+      for await (const record of owned.records()) {
+        if (record.type === "page_version") versioned.add(record.pageId);
+        if (record.type !== "page") continue;
+        pages.push(record.id);
+        // The page goes while the export is between its row and its versions.
+        await runAsSystem("test fixture", () =>
+          prisma.page.deleteMany({ where: { id: doomed.id } }),
+        );
+      }
+      // An import refuses a page with no version, so every page sent must carry one.
+      expect(pages.length).toBeGreaterThan(0);
+      expect(pages.filter((id) => !versioned.has(id))).toEqual([]);
+    } finally {
+      await runAsSystem("test fixture", () => prisma.page.deleteMany({ where: { id: doomed.id } }));
+    }
+  });
+
   it("imports into another account with the same content", async () => {
     const blobs = new Map<string, Uint8Array>();
     const exportApp = new Hono();

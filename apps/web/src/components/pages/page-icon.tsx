@@ -1,5 +1,3 @@
-import { pageTileBars } from "@rakazo/ui-tokens";
-
 /** The page tile shown in a page card's footer. */
 export function PageTileIcon() {
   return (
@@ -21,7 +19,7 @@ export function PageTileIcon() {
         [11, 28.5],
         [18, 24.5],
         [24.5, 18.5],
-      ].map(([x, y], i) => (
+      ].map(([x, y]) => (
         <rect
           key={x}
           x={x}
@@ -29,7 +27,7 @@ export function PageTileIcon() {
           width="3.5"
           height={36 - (y ?? 0)}
           rx="1.75"
-          fill={pageTileBars[i]}
+          fill="var(--page-tile-line)"
         />
       ))}
     </svg>

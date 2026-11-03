@@ -47,3 +47,30 @@ describe("page replies", () => {
     expect(received).toEqual(["Watch the shirt", "x".repeat(300)]);
   });
 });
+
+describe("offered page replies", () => {
+  it("sends a page's offered reply as from that page, even after another page opens", () => {
+    const session = createPageSession();
+    const cardB = {
+      id: "m2",
+      blocks: [{ kind: "page" as const, pageId: "p2", version: 1, title: "Other" }],
+    };
+    session.dock.set({ page: { id: "p1", title: "Plan" } });
+    session.offerReply("Watch the shirt");
+    session.dock.set({ page: { id: "p2", title: "Other" } });
+    expect(session.send("Watch the shirt", [card, cardB])).toEqual({
+      text: "Watch the shirt",
+      replyToMessageId: "m1",
+    });
+    // Once sent, or with the offered text gone, the open page is the one replied to.
+    expect(session.send("Watch the shirt", [card, cardB])).toEqual({
+      text: "Watch the shirt",
+      replyToMessageId: "m2",
+    });
+    session.offerReply("Bigger");
+    expect(session.send("something else", [card, cardB])).toEqual({
+      text: "something else",
+      replyToMessageId: "m2",
+    });
+  });
+});

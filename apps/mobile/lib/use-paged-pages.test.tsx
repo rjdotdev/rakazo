@@ -152,3 +152,21 @@ it("starts from five again when the screen moves to another bot or a group", asy
   expect(read).toHaveBeenLastCalledWith("pages/list", { groupId: "g1", limit: 5 });
   read.mockReset();
 });
+
+it("does not add the old list's next page to a reload that lands first", async () => {
+  const read = vi.mocked(rpc);
+  read.mockReset();
+  read.mockResolvedValueOnce({ items: [page("a"), page("b")], nextCursor: "c1" } as never);
+  await act(async () => root.render(createElement(Probe)));
+  // A pin reloads the list; Show more is tapped before the reload answers.
+  const reload = deferred<unknown>();
+  read.mockReturnValueOnce(reload.promise as never);
+  await act(async () => hook.refresh());
+  const late = deferred<unknown>();
+  read.mockReturnValueOnce(late.promise as never);
+  await act(async () => void hook.showMore());
+  await act(async () => reload.resolve({ items: [page("b"), page("a")], nextCursor: null }));
+  await act(async () => late.resolve({ items: [page("old")], nextCursor: null }));
+  expect(items()).toEqual(["b", "a"]);
+  read.mockReset();
+});

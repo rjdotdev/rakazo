@@ -15,13 +15,15 @@ type PagedPages =
 /**
  * A bot's or group's pages, five at a time, read again each time the list comes back on screen
  * (after Share, or a page a routine changed), as many as were shown, as the web list does.
- * One "Show more" runs at a time, and a page of results that started before a reload (a pin,
- * rename or delete) is dropped.
+ * One "Show more" runs at a time, none runs while a reload is out, and a page of results that
+ * started before a reload (a pin, rename or delete) is dropped.
  */
 export function usePagedPages(owner: { botId?: string; groupId?: string }) {
   const { botId, groupId } = owner;
   const [listed, setListed] = useState<PagedPages>({ status: "loading" });
   const generation = useRef(0);
+  // The reload the list on screen came from: until the newest one answers, its cursor is stale.
+  const answered = useRef(0);
   const loadingMore = useRef(false);
   // How many of whose pages are shown: another bot or group starts again from five.
   const shown = useRef({ owner: "", count: 0 });
@@ -44,16 +46,21 @@ export function usePagedPages(owner: { botId?: string; groupId?: string }) {
     const limit = Math.min(Math.max(shown.current.count, PAGE_SIZE), PAGE_LIST_MAX_LIMIT);
     void rpc("pages/list", input(undefined, limit)).then(
       (result) => {
-        if (started === generation.current) setListed({ status: "ready", ...result });
+        if (started !== generation.current) return;
+        answered.current = started;
+        setListed({ status: "ready", ...result });
       },
       (error: unknown) => {
-        if (started === generation.current) setListed({ status: "error", error });
+        if (started !== generation.current) return;
+        answered.current = started;
+        setListed({ status: "error", error });
       },
     );
   }, [input, botId, groupId]);
   useFocusEffect(load);
   const showMore = useCallback(async () => {
     if (listed.status !== "ready" || !listed.nextCursor || loadingMore.current) return;
+    if (answered.current !== generation.current) return;
     loadingMore.current = true;
     const started = generation.current;
     try {
