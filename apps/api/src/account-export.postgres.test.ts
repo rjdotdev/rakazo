@@ -407,6 +407,117 @@ describePostgres("account export (PostgreSQL)", () => {
     }
   });
 
+  it("leaves out a page deleted between its row and its versions being read", async () => {
+    const doomed = await runAsSystem("test fixture", () =>
+      prisma.page.create({
+        data: {
+          spaceId: ownedSpace,
+          userId: exporter,
+          title: "Scratch",
+          versions: { create: { version: 1, title: "Scratch", source: "", code: "" } },
+        },
+      }),
+    );
+    const source = await readAccountExport(prisma, exporter);
+    const owned = source.spaces.find((space) => space.id === ownedSpace)!;
+    const pages: string[] = [];
+    const versioned = new Set<string>();
+    try {
+      for await (const record of owned.records()) {
+        if (record.type === "page_version") versioned.add(record.pageId);
+        if (record.type !== "page") continue;
+        pages.push(record.id);
+        // The page goes while the export is between its row and its versions.
+        await runAsSystem("test fixture", () =>
+          prisma.page.deleteMany({ where: { id: doomed.id } }),
+        );
+      }
+      // An import refuses a page with no version, so every page sent must carry one.
+      expect(pages.length).toBeGreaterThan(0);
+      expect(pages.filter((id) => !versioned.has(id))).toEqual([]);
+    } finally {
+      await runAsSystem("test fixture", () => prisma.page.deleteMany({ where: { id: doomed.id } }));
+    }
+  });
+
+  it("sends a page whose versions exactly fill a batch", async () => {
+    const versions = 200;
+    const full = await runAsSystem("test fixture", () =>
+      prisma.page.create({
+        data: {
+          spaceId: ownedSpace,
+          userId: exporter,
+          title: "Full batch",
+          currentVersion: versions,
+          versions: {
+            createMany: {
+              data: Array.from({ length: versions }, (_, index) => ({
+                version: index + 1,
+                title: "Full batch",
+                source: "",
+                code: "",
+              })),
+            },
+          },
+        },
+      }),
+    );
+    try {
+      const source = await readAccountExport(prisma, exporter);
+      const owned = source.spaces.find((space) => space.id === ownedSpace)!;
+      let sent = 0;
+      for await (const record of owned.records())
+        if (record.type === "page_version" && record.pageId === full.id) sent++;
+      expect(sent).toBe(versions);
+    } finally {
+      await runAsSystem("test fixture", () => prisma.page.deleteMany({ where: { id: full.id } }));
+    }
+  });
+
+  it("fails rather than send part of a page deleted between its version batches", async () => {
+    const versions = 201;
+    const doomed = await runAsSystem("test fixture", () =>
+      prisma.page.create({
+        data: {
+          spaceId: ownedSpace,
+          userId: exporter,
+          title: "Long history",
+          currentVersion: versions,
+          versions: {
+            createMany: {
+              data: Array.from({ length: versions }, (_, index) => ({
+                version: index + 1,
+                title: "Long history",
+                source: "",
+                code: "",
+              })),
+            },
+          },
+        },
+      }),
+    );
+    try {
+      const source = await readAccountExport(prisma, exporter);
+      const owned = source.spaces.find((space) => space.id === ownedSpace)!;
+      let sent = 0;
+      const read = async () => {
+        for await (const record of owned.records()) {
+          if (record.type !== "page_version" || record.pageId !== doomed.id) continue;
+          // The page goes once its first batch of versions is out.
+          if (++sent === 1)
+            await runAsSystem("test fixture", () =>
+              prisma.page.deleteMany({ where: { id: doomed.id } }),
+            );
+        }
+      };
+      // The page header promised every version, so a short page must not pass as complete.
+      await expect(read()).rejects.toThrow(/deleted during the export/);
+      expect(sent).toBeLessThan(versions);
+    } finally {
+      await runAsSystem("test fixture", () => prisma.page.deleteMany({ where: { id: doomed.id } }));
+    }
+  });
+
   it("imports into another account with the same content", async () => {
     const blobs = new Map<string, Uint8Array>();
     const exportApp = new Hono();

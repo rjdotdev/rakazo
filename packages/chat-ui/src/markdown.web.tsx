@@ -20,7 +20,7 @@ import type { HastNode } from "./table-utils";
 import "./markdown.web.css";
 import "./markdown-table.css";
 import { droppedTableHtmlText } from "@rakazo/contracts";
-import { cssVariableName, pageIconBars } from "@rakazo/ui-tokens";
+import { cssVariableName } from "@rakazo/ui-tokens";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -657,7 +657,7 @@ export function PageIcon({ className }: { className?: string }) {
           fill={`var(${cssVariableName(line.token)})`}
         />
       ))}
-      {PAGE_ICON.bars.map((bar, index) => (
+      {PAGE_ICON.bars.map((bar) => (
         <rect
           key={bar.x}
           x={bar.x}
@@ -665,7 +665,7 @@ export function PageIcon({ className }: { className?: string }) {
           width={PAGE_ICON.barWidth}
           height={bar.height}
           rx={PAGE_ICON.barWidth / 2}
-          fill={pageIconBars[index]}
+          fill="var(--page-icon-line)"
         />
       ))}
     </svg>

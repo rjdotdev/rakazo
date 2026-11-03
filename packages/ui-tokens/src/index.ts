@@ -302,13 +302,6 @@ export const typeScale = {
 export const MAX_FONT_SCALE = 23 / typeScale.body.fontSize;
 
 /**
- * The rising bars on the page icon, the same in both themes. The folded icon was measured from
- * the chat chip; the card footer's tile draws them a little brighter.
- */
-export const pageIconBars = ["#489D61", "#E7712E", "#BC3B3D", "#3E82F3"] as const;
-export const pageTileBars = ["#5AC078", "#E9993A", "#E87031", "#3E82F4"] as const;
-
-/**
  * Bot-built pages: data series and status tones, a step deeper on white. Kept out of tokens.css
  * because only the sandboxed page document uses them, never the app's own chrome.
  */
