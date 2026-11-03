@@ -1549,6 +1549,8 @@ model Page {
   /// The link token itself, sealed in the secret store so the owner can copy the link again.
   shareSecretId  String?       @unique
   shareSecret    Secret?       @relation(fields: [shareSecretId], references: [id], onDelete: SetNull)
+  /// Bumped by every turn-off, so a turn-on that read the page before one can't land after it.
+  shareRevision  Int           @default(0)
   pinnedAt       DateTime?
   currentVersion Int           @default(1)
   createdAt      DateTime      @default(now())

@@ -1,6 +1,6 @@
 /**
  * The page icon in a 33 x 41 box: a sheet with a folded top-right corner, two lines and four
- * rising bars, coloured by the `pageIcon*` tokens and `pageIconBars`.
+ * rising bars, coloured by the `pageIcon*` tokens; the bars share the first line's ink.
  */
 export const PAGE_ICON = {
   width: 33,

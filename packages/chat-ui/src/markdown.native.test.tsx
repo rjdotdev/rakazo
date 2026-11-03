@@ -1990,6 +1990,13 @@ describe("native markdown page links", () => {
     const links = [...container.querySelectorAll<HTMLElement>("[data-accessibility-role='link']")];
     expect(links.map((link) => link.textContent)).toEqual(["Duplex voice"]);
     expect(links[0]!.querySelector("rn-view")).not.toBeNull();
+    // The app is monochrome: every part of the icon, bars included, takes a theme token.
+    const iconColors = new Set<string>(Object.values(darkTokens));
+    const painted = [...links[0]!.querySelectorAll("rn-view[data-background-color]")].map(
+      (part) => part.getAttribute("data-background-color")!,
+    );
+    expect(painted.length).toBeGreaterThan(4);
+    for (const color of painted) expect(iconColors).toContain(color);
     expect(links[0]!.querySelector("[data-text-decoration-line='underline']")?.textContent).toBe(
       "Duplex voice",
     );

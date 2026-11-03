@@ -17,11 +17,14 @@ vi.mock("@lingui/react/macro", () => {
 });
 
 import { dictation } from "../../lib/dictation";
+import type { PageSession } from "../../lib/pages";
+import { createPageSession, PagesProvider } from "../../lib/pages";
 import { Composer } from "./composer";
 
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
 let composerProps: ComponentProps<typeof Composer>;
+let pageSession: PageSession | null = null;
 
 beforeEach(() => {
   i18n.load("en", {});
@@ -33,6 +36,7 @@ afterEach(() => {
   container?.remove();
   root = null;
   container = null;
+  pageSession = null;
   localStorage.clear();
 });
 
@@ -98,7 +102,16 @@ function renderComposer(
 
 function rerenderComposer(overrides: Partial<ComponentProps<typeof Composer>>) {
   composerProps = { ...composerProps, ...overrides };
-  act(() => root?.render(<Composer {...composerProps} />));
+  const composer = <Composer {...composerProps} />;
+  act(() =>
+    root?.render(
+      pageSession ? (
+        <PagesProvider value={{ open: () => {}, session: pageSession }}>{composer}</PagesProvider>
+      ) : (
+        composer
+      ),
+    ),
+  );
 }
 
 it("shows a readable run error with raw details, while preserving send errors", () => {
@@ -1465,3 +1478,66 @@ it.each([10, -30, window.innerHeight - 10])(
     }
   },
 );
+
+describe("a page's offered reply", () => {
+  const cardA = {
+    id: "m1",
+    blocks: [{ kind: "page" as const, pageId: "p1", version: 1, title: "A" }],
+  };
+  const cardB = {
+    id: "m2",
+    blocks: [{ kind: "page" as const, pageId: "p2", version: 1, title: "B" }],
+  };
+  const offer = "Watch the shirt";
+
+  function offerFromA(onSend: ComponentProps<typeof Composer>["onSend"]) {
+    const session = createPageSession();
+    pageSession = session;
+    session.dock.set({ page: { id: "p1", title: "A" } });
+    const textarea = renderComposer(onSend);
+    act(() => session.offerReply(offer));
+    expect(textarea.value).toBe(offer);
+    return { session, textarea };
+  }
+  function repliesTo(session: PageSession, text = offer) {
+    session.dock.set({ page: { id: "p2", title: "B" } });
+    return session.send(text, [cardA, cardB]).replyToMessageId;
+  }
+
+  it("stays with its page while it is the draft, through a failed send and edits around it", async () => {
+    const { session, textarea } = offerFromA(async () => false);
+    pressEnter(textarea);
+    await act(async () => {});
+    expect(textarea.value).toBe(offer);
+    type(textarea, `${offer} please`);
+    expect(repliesTo(session, `${offer} please`)).toBe("m1");
+  });
+
+  it.each([
+    ["accepted", async () => true],
+    ["rejected", async () => Promise.reject(new Error("offline"))],
+  ])(
+    "is used up by any send that may have gone, routines-only included (%s)",
+    async (_, onSend) => {
+      // The send callback may run only routines and never name a page; the offer still went.
+      const { session, textarea } = offerFromA(onSend);
+      pressEnter(textarea);
+      await act(async () => {});
+      expect(repliesTo(session)).toBe("m2");
+    },
+  );
+
+  it.each(["", "Watch the"])("is gone once the draft no longer holds it (%j)", (draft) => {
+    const { session, textarea } = offerFromA(async () => true);
+    type(textarea, draft);
+    type(textarea, offer);
+    expect(repliesTo(session)).toBe("m2");
+  });
+
+  it("is gone once its chat closes", () => {
+    const { session } = offerFromA(async () => true);
+    act(() => root?.unmount());
+    root = null;
+    expect(repliesTo(session)).toBe("m2");
+  });
+});

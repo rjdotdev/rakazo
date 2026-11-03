@@ -896,6 +896,12 @@ describe("web markdown page links", () => {
     const chips = container.querySelectorAll<HTMLButtonElement>("button.rk-chat-page-chip");
     expect([...chips].map((chip) => chip.textContent)).toEqual(["Duplex voice"]);
     expect(chips[0]!.querySelector("svg")).not.toBeNull();
+    // The app is monochrome: every part of the icon, bars included, takes a theme token.
+    const fills = [...chips[0]!.querySelectorAll("svg [fill]")].map((part) =>
+      part.getAttribute("fill"),
+    );
+    expect(fills.length).toBeGreaterThan(4);
+    for (const fill of fills) expect(fill).toMatch(/^var\(--page-icon-/);
     await act(async () => {
       chips[0]!.click();
     });

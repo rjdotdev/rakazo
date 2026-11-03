@@ -196,6 +196,17 @@ async function* spaceRecords(
       take: PAGE,
     });
     for (const page of pages) {
+      // A save landing after the page row was read stays out, so the archive matches its header.
+      const readVersions = (after: number) =>
+        prisma.pageVersion.findMany({
+          where: { pageId: page.id, version: { gt: after, lte: page.currentVersion } },
+          orderBy: { version: "asc" },
+          take: PAGE,
+          select: { id: true, version: true, title: true, source: true, createdAt: true },
+        });
+      let versions = await readVersions(0);
+      // A page deleted since its row was read has no versions left, and goes unexported.
+      if (!versions.length) continue;
       yield {
         type: "page",
         id: page.id,
@@ -207,18 +218,13 @@ async function* spaceRecords(
         createdAt: iso(page.createdAt),
         updatedAt: iso(page.updatedAt),
       };
-      // A save landing after the page row was read stays out, so the archive matches its header.
-      for (let version = 0; ; ) {
-        const versions = await prisma.pageVersion.findMany({
-          where: { pageId: page.id, version: { gt: version, lte: page.currentVersion } },
-          orderBy: { version: "asc" },
-          take: PAGE,
-          select: { id: true, version: true, title: true, source: true, createdAt: true },
-        });
+      for (;;) {
         for (const row of versions)
           yield { type: "page_version", ...row, pageId: page.id, createdAt: iso(row.createdAt) };
-        if (versions.length < PAGE) break;
-        version = versions.at(-1)!.version;
+        if (versions.length < PAGE || versions.at(-1)!.version === page.currentVersion) break;
+        versions = await readVersions(versions.at(-1)!.version);
+        // Its header is already out, so a page deleted now cannot be dropped; stop the export.
+        if (!versions.length) throw new Error(`Page ${page.id} was deleted during the export`);
       }
     }
     if (pages.length < PAGE) break;
