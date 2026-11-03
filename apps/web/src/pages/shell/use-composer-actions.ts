@@ -347,7 +347,8 @@ export function useComposerActions({
         const permissionRequest = requestBrowserNotificationPermission();
         if (permissionRequest) void permissionRequest.then(flushPendingBrowserNotifications);
       }
-      // The open page rides only on text this chat sends, never on a group or routine-only send.
+      // The open page rides only on text this chat sends, never on one rerouted to a mentioned group
+      // or a routine-only send.
       const fromPage =
         plan.shouldSend && !reroutedToGroup
           ? pageSession.send(plan.trimmed, activeSnapshot?.messages ?? [], activeReplyTarget?.id)

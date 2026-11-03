@@ -148,6 +148,7 @@ const ComposerBody = memo(function Composer({
     bindings: readComposerDraftBindings(draftKey),
   }));
   const draft = composition.text;
+  const pageSession = usePageSession();
   const mentionBindings = composition.bindings;
   const compositionRef = useRef(composition);
   compositionRef.current = composition;
@@ -166,7 +167,13 @@ const ComposerBody = memo(function Composer({
     compositionRef.current = next;
     setComposition(next);
     editSelections.current = [];
-    if (persist) writeComposerDraft(draftKey, next.text, undefined, next.bindings);
+    if (!persist) return;
+    writeComposerDraft(draftKey, next.text, undefined, next.bindings);
+    pageSession?.edited(next.text);
+  }
+  function sent(offer = pageSession?.currentOffer()) {
+    recordMessageSent();
+    pageSession?.dropOffer(offer);
   }
   function appendDictation(text: string) {
     if (!mountedRef.current || draftKeyRef.current !== draftKey) return;
@@ -193,7 +200,7 @@ const ComposerBody = memo(function Composer({
       void onSend(text, [], newClientId())
         .then((accepted) => {
           if (accepted === false) appendDictation(text);
-          else recordMessageSent();
+          else sent();
         })
         .catch(() => appendDictation(text));
     },
@@ -241,8 +248,9 @@ const ComposerBody = memo(function Composer({
     textareaRef.current?.setSelectionRange(selection.start, selection.end);
     textareaRef.current?.focus();
   });
-  // A reply button on the open page adds its text here for the user to send.
-  const pageSession = usePageSession();
+  // A reply button on the open page adds its text here for the user to send. The offer holds
+  // only while it is this chat's draft.
+  useEffect(() => () => pageSession?.dropOffer(), [pageSession]);
   useEffect(
     () =>
       pageSession?.subscribeReply((text) => {
@@ -452,6 +460,7 @@ const ComposerBody = memo(function Composer({
     const text = serializeComposerPrompt(submitted.text, selectedSkill);
     const mentions = composerMentionsForPrompt(submitted.text, selectedSkill, submitted.bindings);
     const submission = beginComposerDraftSubmission(draftKey, draft);
+    const offer = pageSession?.currentOffer() ?? null;
     commitComposition({ text: "", bindings: [] }, false);
     setMentionQuery(null);
     setMentionHighlightKey(null);
@@ -464,12 +473,13 @@ const ComposerBody = memo(function Composer({
           : onSend(text, mentions, clientNonce))) !== false;
       settleComposerDraftSubmission(draftKey, submission, accepted);
       if (accepted) {
-        recordMessageSent();
+        sent(offer);
         return;
       }
     } catch {
       settleComposerDraftSubmission(draftKey, submission, false);
       // A rejected callback leaves acceptance unknown; do not restore a possible send.
+      pageSession?.dropOffer(offer);
       return;
     }
     // Restore only an untouched draft, retaining its nonce for an unchanged retry.

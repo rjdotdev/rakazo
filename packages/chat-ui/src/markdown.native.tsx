@@ -3,7 +3,6 @@ import {
   darkTokens,
   fontWeight,
   MAX_FONT_SCALE,
-  pageIconBars,
   tokensForAppearance,
   typeScale,
 } from "@rakazo/ui-tokens";
@@ -1214,7 +1213,7 @@ export function PageIcon({
           }}
         />
       ))}
-      {PAGE_ICON.bars.map((bar, index) => (
+      {PAGE_ICON.bars.map((bar) => (
         <View
           key={bar.x}
           style={{
@@ -1224,7 +1223,7 @@ export function PageIcon({
             width: PAGE_ICON.barWidth * s,
             height: bar.height * s,
             borderRadius: (PAGE_ICON.barWidth / 2) * s,
-            backgroundColor: pageIconBars[index],
+            backgroundColor: colors.pageIconLine,
           }}
         />
       ))}

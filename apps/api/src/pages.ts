@@ -59,7 +59,7 @@ async function stillThere<T>(write: Promise<T>): Promise<T> {
 async function requirePage(prisma: PrismaClient, actor: Actor, pageId: string) {
   const row = await prisma.page.findFirst({
     where: { id: pageId, spaceId: actor.spaceId, userId: actor.userId },
-    select: { ...summarySelect, shareSecretId: true },
+    select: { ...summarySelect, shareSecretId: true, shareRevision: true },
   });
   if (!row) throw new IsolationError();
   return row;
@@ -225,7 +225,9 @@ export class PageShareConflictError extends Error {
  * Turning on a page that already has a link keeps that link (`kept`), so two turn-ons at once
  * both hand out the one URL that works, unless that link is `next.unreadable`: its token can't
  * be loaded, so it is replaced. `replaced` is the secret a swap deleted, for the caller to remove
- * from the secret store once committed.
+ * from the secret store once committed. Every turn-off bumps the page's share revision, and a
+ * turn-on only lands on the revision it read before sealing its token, so one that started before
+ * a completed turn-off fails rather than bringing a link back.
  */
 async function swapPageShare(
   prisma: PrismaClient,
@@ -234,6 +236,7 @@ async function swapPageShare(
     tokenHash: string;
     secret: { id: string; data: Prisma.SecretUncheckedCreateInput };
     unreadable: string | null;
+    revision: number;
   } | null,
 ): Promise<{ kept: boolean; replaced: PageShareSecret | null }> {
   for (let attempt = 0; ; attempt++) {
@@ -241,18 +244,28 @@ async function swapPageShare(
       .$transaction(async (tx) => {
         const current = await tx.page.findUnique({
           where: { id: pageId },
-          select: { shareSecretId: true },
+          select: { shareSecretId: true, shareRevision: true },
         });
         if (!current) throw new IsolationError();
         if (next && current.shareSecretId && current.shareSecretId !== next.unreadable) {
           return { kept: true, replaced: null };
         }
+        if (next && current.shareRevision !== next.revision) throw new PageShareConflictError();
         if (next) await tx.secret.create({ data: next.secret.data });
         const moved = await tx.page.updateMany({
-          where: { id: pageId, shareSecretId: current.shareSecretId },
+          where: {
+            id: pageId,
+            shareSecretId: current.shareSecretId,
+            shareRevision: current.shareRevision,
+          },
           data: next
             ? { visibility: "link", shareTokenHash: next.tokenHash, shareSecretId: next.secret.id }
-            : { visibility: "private", shareTokenHash: null, shareSecretId: null },
+            : {
+                visibility: "private",
+                shareTokenHash: null,
+                shareSecretId: null,
+                shareRevision: { increment: 1 },
+              },
         });
         // Rolling back drops the new secret with the failed swap.
         if (moved.count === 0) throw new PageShareConflictError();
@@ -319,6 +332,7 @@ export async function setPageVisibility(
         },
       },
       unreadable,
+      revision: row.shareRevision,
     });
   } catch (error) {
     await forgetPageShareSecrets(deps.secrets, [stored]);

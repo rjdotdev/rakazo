@@ -106,6 +106,7 @@ export function createPageSession() {
   let opener: { element: HTMLElement; ring: boolean } | null = null;
   let shareRequest: string | null = null;
   let dock: Dock = { node: null, page: null };
+  let offered: { text: string; page: NonNullable<Dock["page"]> } | null = null;
   const dockListeners = new Set<() => void>();
   const replyListeners = new Set<(text: string) => void>();
   return {
@@ -153,6 +154,7 @@ export function createPageSession() {
     offerReply(text: unknown) {
       const clean = pageReplyText(text);
       if (!clean || !dock.page) return;
+      offered = { text: clean, page: dock.page };
       for (const listener of replyListeners) listener(clean);
     },
     subscribeReply(listener: (text: string) => void) {
@@ -161,13 +163,30 @@ export function createPageSession() {
         replyListeners.delete(listener);
       };
     },
-    /** From the open page: reply to its card, or name the page if this chat has none. */
+    /**
+     * From the open page: reply to its card, or name the page if this chat has none. A reply a
+     * page offered still in the text goes from that page, even if another one is open now.
+     */
     send(
       text: string,
       messages: readonly { id: string; blocks: readonly MessageBlock[] }[],
       chosenReplyId?: string,
     ): { text: string; replyToMessageId?: string } {
-      return pageReply(text, messages, dock.page, chosenReplyId);
+      const page = offered && text.includes(offered.text) ? offered.page : dock.page;
+      return pageReply(text, messages, page, chosenReplyId);
+    },
+    /** The user changed the draft: an offered reply no longer in it is gone. */
+    edited(draft: string) {
+      if (offered && !draft.includes(offered.text)) offered = null;
+    },
+    /** The offer in the draft now, so a send can later drop just the one it took. */
+    currentOffer: () => offered,
+    /**
+     * A send went or the chat closed, so the offer is used up; a failed send keeps it for the
+     * retry. A send drops only the offer it took, never one offered while it was going.
+     */
+    dropOffer(sent = offered) {
+      if (offered === sent) offered = null;
     },
   };
 }

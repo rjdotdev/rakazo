@@ -9,6 +9,7 @@ CREATE TABLE "pages" (
     "visibility" TEXT NOT NULL DEFAULT 'private',
     "shareTokenHash" TEXT,
     "shareSecretId" TEXT,
+    "shareRevision" INTEGER NOT NULL DEFAULT 0,
     "pinnedAt" TIMESTAMP(3),
     "currentVersion" INTEGER NOT NULL DEFAULT 1,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
