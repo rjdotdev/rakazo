@@ -66,6 +66,7 @@ import {
   loadLoginPasswordRedactions,
   loadRunCodeRedactions,
   loadRunLoginRedactions,
+  VaultKeyUnavailableError,
 } from "./bot-secrets.js";
 import { createBrowserProvider } from "./browser-provider-factory.js";
 import { partitionTools } from "./builtin-tool-bridge.js";
@@ -2143,11 +2144,12 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
         const reportedSetupError = sanitizedError(setupError, (text) =>
           redactSecrets(text, runSecrets),
         );
-        // An outage at the computer provider is retried like any setup failure, but is not a
-        // Rakazo bug to report.
+        // An outage at the computer provider or the key manager is retried like any setup
+        // failure, but is not a Rakazo bug to report.
         const providerOutage =
           setupError instanceof SandboxUnavailableError ||
-          setupError instanceof SandboxUnresponsiveError;
+          setupError instanceof SandboxUnresponsiveError ||
+          setupError instanceof VaultKeyUnavailableError;
         // A lost lease aborted setup on purpose; whatever that interrupted is not a failure.
         if (providerOutage || !lease.valid) {
           getLogger().warn("run setup failed", { error: reportedSetupError });
