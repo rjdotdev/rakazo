@@ -6,6 +6,7 @@ import {
   createSecretStore,
   EncryptedSecretStore,
   LocalArtifactStore,
+  migrateVaultValues,
   unwrapEnvFromKeyManager,
   upgradeLegacySecrets,
   withSecretPersistence,
@@ -30,8 +31,9 @@ await unwrapEnvFromKeyManager();
 
 const USAGE = `Usage: content-encryption <command> [--dry-run]
   status               Rows and artifacts still in plaintext, keys per master key
-  migrate              Encrypt existing content, upgrade legacy credentials and
-                       move MCP server arguments into their encrypted credentials
+  migrate              Encrypt existing content, upgrade legacy credentials, move
+                       vault values to the content keys and MCP server arguments
+                       into their encrypted credentials
   rotate [--reencrypt] Re-wrap space keys under the active master key; with
                        --reencrypt also add new data keys and re-encrypt content
   reencrypt            Re-encrypt content still under an older data key
@@ -171,6 +173,25 @@ async function upgradeCredentials() {
   if (counts.failed) process.exitCode = 1;
 }
 
+async function rewriteVaultValues(mode: "encrypt" | "decrypt") {
+  const counts = await migrateVaultValues(
+    prisma,
+    new EncryptedSecretStore(resolveEncryptionKey(process.env)),
+    {
+      operationId: "content-encryption",
+      traceId: "content-encryption",
+      userId: "migration",
+      spaceId: "migration",
+      signal: controller.signal,
+    },
+    { mode, dryRun, report: (row, status) => write(`vault item ${row.id}: ${status}`) },
+  );
+  write(
+    `vault items: ${counts.migrated} rewritten, ${counts.planned} planned, ${counts.verified} current, ${counts.concurrent} changed concurrently, ${counts.failed} failed`,
+  );
+  if (counts.failed) process.exitCode = 1;
+}
+
 async function moveMcpArgs() {
   const secrets = createSecretStore(resolveEncryptionKey(process.env));
   await secrets.start();
@@ -194,7 +215,9 @@ try {
     if (command === "status") {
       const status = await contentEncryptionStatus(prisma);
       for (const table of status.tables)
-        write(`${table.table}: ${table.plaintext} of ${table.rows} in plaintext`);
+        write(
+          `${table.table}: ${table.plaintext} of ${table.rows} ${table.table === "vault_credentials" ? "not yet under the content keys" : "in plaintext"}`,
+        );
       for (const [masterKeyId, count] of Object.entries(status.masterKeys))
         write(`space keys under master key ${masterKeyId}: ${count}`);
       write(`active master key: ${contentKeys.provider.activeKeyId()}`);
@@ -213,6 +236,7 @@ try {
         write("CONTENT_ENCRYPTION is off: new content is still stored in plaintext");
       await rewriteContent("encrypt");
       await upgradeCredentials();
+      await rewriteVaultValues("encrypt");
       await moveMcpArgs();
     } else if (command === "rotate") {
       const keys = await rewrapSpaceKeys(prisma, contentKeys, {
@@ -231,7 +255,12 @@ try {
     } else if (command === "export") {
       await exportJsonLines();
     } else {
+      if (resolveContentEncryption(process.env))
+        write(
+          "CONTENT_ENCRYPTION is on: new content and vault saves are still encrypted; set it to off before rolling back",
+        );
       await rewriteContent("decrypt");
+      await rewriteVaultValues("decrypt");
     }
   });
 } catch (error) {
