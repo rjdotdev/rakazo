@@ -8,6 +8,7 @@ import { mobileTokens } from "../lib/appearance";
 import { useI18n } from "../lib/i18n";
 import { useThemedStyles } from "../lib/native";
 import { useSecretSheetClose } from "../lib/secret-sheet-close";
+import { secretAnswerErrorText } from "../lib/user-error";
 import type { LoginFieldRow } from "./login-fields-editor";
 import { LoginFieldsEditor } from "./login-fields-editor";
 import { NativeActionButton } from "./native-action-button";
@@ -69,8 +70,8 @@ export function SecretAskSheet({
     setError(null);
     try {
       await onSave(answer, remember);
-    } catch {
-      setError(t("Could not send answer"));
+    } catch (err) {
+      setError(secretAnswerErrorText(err, t("Could not send answer")));
     } finally {
       setSubmitting(false);
     }

@@ -100,7 +100,7 @@ To sign in, the bot fills fields found with `browser_snapshot`, naming each by i
 
 `"username"` and `"password"` also name a login's first visible and first hidden field, so a bot can fill a login saved in settings without knowing its labels.
 
-The backend decrypts the value and the page browser types it only if the page is still on the saved origin at that moment, so a login cannot be typed into another site or a page that redirected. The origin must be HTTPS: `RAKAZO_SECRETS_ALLOW_PRIVATE_HTTP` does not apply to website logins. A hidden field goes only into a password field, and a visible field only into a text, email or tel input. A visible field can appear on the page and in screenshots. A site's "show password" control still works normally; revealing a hidden value can make it visible in screenshots. Values travel to the computer over stdin, not command-line arguments. Snapshots never report the value of a field that holds a saved login. In every run, not only the one that filled it, tool results such as page results, command output and file reads are scrubbed of each saved login's hidden fields in plain, URL-encoded, form-encoded and base64 form; hidden values shorter than 6 characters are only scrubbed in the run that fills them. In the run that fills a login, page results are also scrubbed of its visible fields of 6 or more characters, which covers a site that echoes them in page text; shorter visible values are not scrubbed because redaction replaces every occurrence. Later runs leave visible fields readable, since one is often the user's own email address. Only this bot's own runs scrub its hidden fields: on a Team Computer, other bots' runs don't, so use a Private Computer for a bot that signs in to sites. A login cannot be used with `secret_request`. Fills need no approval: saving the login is the approval, and it is bound to one site. Use `forget_secret` to remove it.
+The backend decrypts the value and the page browser types it only if the page is still on the saved origin at that moment, so a login cannot be typed into another site or a page that redirected. The origin must be HTTPS: `RAKAZO_SECRETS_ALLOW_PRIVATE_HTTP` does not apply to website logins. A hidden field goes only into a password field, and a visible field only into a text, email or tel input. A visible field can appear on the page and in screenshots. A site's "show password" control still works normally; revealing a hidden value can make it visible in screenshots. Values travel to the computer over stdin, not command-line arguments. Snapshots never report the value of a field that holds a saved login. In every run, not only the one that filled it, tool results such as page results, command output and file reads are scrubbed of each saved login's hidden fields in plain, URL-encoded, form-encoded and base64 form; hidden values shorter than 6 characters are only scrubbed in the run that fills them. In the run that fills a login, page results are also scrubbed of its visible fields of 6 or more characters, which covers a site that echoes them in page text; shorter visible values are not scrubbed because redaction replaces every occurrence. Later runs leave visible fields readable, since one is often the user's own email address. Saved logins belong to you, not to one bot, so in a Space only you use, every run on its Team Computer scrubs every login in the vault that Space uses, whichever bot filled it and whichever bots may use it. In a [shared Space](./spaces.md#share-a-space), other members' runs scrub only their own logins, so sign in from a Private Computer there. Each run reads the vault when it starts, so another bot's run that is already going doesn't scrub a login saved or changed after it began, and a login kept without saving is only scrubbed in its own run. On any computer, later runs no longer scrub a login's old values once it is changed or removed, or the logins in a vault the Space has stopped using. Redaction hides text, not sessions: the other bots on a Team Computer can use the sites a bot signed in to, so use a Private Computer for a bot whose sign-ins they must not use. A login cannot be used with `secret_request`. Unless the login is set to Ask first (see Managing the vault), fills need no approval: saving the login is the approval, and it is bound to one site. Use `forget_secret` to remove it.
 
 Logins saved before fields existed read as a visible Username and a hidden Password, and fill exactly as before.
 
@@ -136,6 +136,24 @@ Opening an item shows its fields; protected values show only after you confirm i
 there you can edit an item, add a note on when the bot should use it, which `list_secrets` shows
 the bot, or remove it after confirming. Remove deletes the saved value immediately. Asking the bot
 to `forget_secret` a name only removes it; it does not list or replace one.
+
+Each item's **Bots** setting says which bots may use it. Every bot may by default. Block keeps every
+bot from it (a contact can't be blocked), and choosing bots limits it to those bots; none chosen
+means no bot uses it. In a shared Space you can choose any of its bots, and your choice covers only
+your runs with them, since each person's runs use their own vault. A login can also **Ask first**:
+each `browser_act` call that signs in
+with it shows the user a card, such as "Sign in to example.com with Work login?" (its title, never a
+username), covering every field of that login the call fills, and typing nothing if they decline.
+Separate calls ask again, saving the login again while a card waits means it asks again, and a
+webhook run can't use it, as with saved cards. A login saved by `generate_secret` with `command:
+true` also has a command variable copy of its password, `<name>-password`: that copy is its own item
+with its own Bots setting, so Ask first, Block or chosen bots on the login don't cover it; set it
+too. Bots are chosen in the Space they are in: limiting an account item in one Space leaves the bots
+of your other Spaces as they were, and a Space with its own vault never uses account items. A bot
+treats an item it may not use as missing, while a value it saw earlier stays hidden from its runs.
+During an upgrade, a worker of the previous release ignores the choice of bots and treats Ask first
+as Allow until it stops. Rolling the server back to the previous release widens access the same way:
+Ask first reads as Allow and chosen bots are ignored.
 
 A sign-in without a password, such as an ID number and phone number, uses the same login card. CAPTCHA and passkeys still use `request_takeover`, as does any sign-in you prefer to do yourself.
 

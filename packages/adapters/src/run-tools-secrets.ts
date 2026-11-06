@@ -20,6 +20,7 @@ import {
   findSiteLogin,
   forgetBotSecret,
   generateBotSecret,
+  HIDDEN_ITEM,
   listBotSecrets,
   normalizeSecretDestination,
   oneTimeCodeRedactions,
@@ -29,7 +30,12 @@ import {
   resolveRequestSecretDestination,
   sameSecretDestination,
 } from "./bot-secrets.js";
-import { addRunSecrets, pauseForSecret, persistTurnCheckpoint } from "./run-context.js";
+import {
+  addRunSecrets,
+  pauseForSecret,
+  persistTurnCheckpoint,
+  recordVaultUse,
+} from "./run-context.js";
 import { recordEffect } from "./run-effects.js";
 import { renewRunLease } from "./run-lifecycle.js";
 import { notifyRun, secretAskNotification } from "./run-notifications.js";
@@ -96,6 +102,7 @@ export const secretTools: ToolHandlers = {
         signal: context.signal,
         remote: deps.secretHttp,
         registerRedactions: (values) => addRunSecrets(ctx, values),
+        recordUse: (item, site) => recordVaultUse(ctx, call.name, item, site),
       });
       return call.finish(result);
     } catch {
@@ -117,7 +124,9 @@ export const secretTools: ToolHandlers = {
     // A saved login whose site was wrong is replaced only from a card answered for this site.
     let replaces: { id: string; origin: string } | undefined;
     if (destination) {
-      const saved = await findBotSecret(deps.prisma, run, destination.name);
+      const found = await findBotSecret(deps.prisma, run, destination.name);
+      if (found && "hidden" in found) return call.finish({ error: HIDDEN_ITEM });
+      const saved = found ?? undefined;
       const existing = saved?.destination;
       // A login the person chose not to save stays with this run; the bot is told so it doesn't
       // say it was saved. Field labels only, never values.

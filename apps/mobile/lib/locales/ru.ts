@@ -1,5 +1,15 @@
 export const RU_MESSAGES: Record<string, string> = {
   Haptics: "Тактильный отклик",
+  "Logins, cards and details your bots can use for you.":
+    "Логины, карты и данные, которые ваши боты могут использовать за вас.",
+  "Add your first item": "Добавьте первый элемент",
+  "Bots type saved passwords and card numbers without seeing them.":
+    "Боты вводят сохранённые пароли и номера карт, не видя их.",
+  "Signs in only on its own site": "Входит только на своём сайте",
+  "Asks you before every payment": "Спрашивает вас перед каждой оплатой",
+  "Fills in a name, address or phone": "Заполняет имя, адрес или телефон",
+  "Lets a bot call a service": "Позволяет боту обращаться к сервису",
+  "Set in the bot's commands": "Задаётся в командах бота",
   "Add rule": "Добавить правило",
   "Tool name": "Название инструмента",
   Address: "Адрес",
@@ -28,7 +38,6 @@ export const RU_MESSAGES: Record<string, string> = {
   Logins: "Логины",
   "Name on card": "Имя на карте",
   "New item": "Новая запись",
-  "Nothing saved yet.": "Пока ничего не сохранено.",
   Phone: "Телефон",
   "Security code": "Код безопасности",
   "State or region": "Регион",
@@ -1486,6 +1495,25 @@ export const RU_MESSAGES: Record<string, string> = {
   "Read from the page, not checked": "Прочитано со страницы, не проверено",
   Total: "Итого",
   "{name} options": "Опции: {name}",
+  "Used {when} by {bot}": "Использовано {when} ботом {bot}",
+  Bots: "Боты",
+  "Saved, but this server can't block bots yet.":
+    "Сохранено, но этот сервер пока не может блокировать ботов.",
+  "Chosen bots": "Выбранные боты",
+  "This item is blocked for bots. Allow it in the Vault, or dismiss the request.":
+    "Этот элемент заблокирован для ботов. Разрешите его в хранилище или отклоните запрос.",
+  "No bots": "Нет ботов",
+  "This limits only this Space's bots. Your other Spaces choose for their own.":
+    "Это ограничивает только ботов этого пространства. Другие ваши пространства выбирают для своих.",
+  "This Space keeps its own vault, so its bots can't use account items.":
+    "У этого пространства своё хранилище, поэтому его боты не могут использовать элементы аккаунта.",
+  "Ask first": "Сначала спрашивать",
+  "Saved, but this server can't ask you first.":
+    "Сохранено, но этот сервер не может сначала спрашивать вас.",
+  "Saved, but this server can't limit an item to chosen bots.":
+    "Сохранено, но этот сервер не может ограничить элемент выбранными ботами.",
+  "This bot can't use this item. Change it in the Vault, or dismiss the request.":
+    "Этот бот не может использовать этот элемент. Измените это в хранилище или отклоните запрос.",
 };
 
 export const PEER_MESSAGE_FORMS: Partial<Record<Intl.LDMLPluralRule, string>> = {

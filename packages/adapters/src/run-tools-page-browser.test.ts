@@ -1,7 +1,9 @@
 import type { AdapterContext, ComputerRef, PageBrowserCommand } from "@rakazo/adapter-kit";
+import { encodeLoginSecret } from "@rakazo/contracts";
 import { createStreamingRedactor } from "@rakazo/core";
-import { describe, expect, it, vi } from "vitest";
-import { encodeRunCode, storeBotSecret } from "./bot-secrets.js";
+import { installAuditEventStore, runLoginKind } from "@rakazo/db";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { encodeRunCode, encodeRunLogin, relabelVaultItem, storeBotSecret } from "./bot-secrets.js";
 import { fakeDatabase } from "./bot-secrets.test-support.js";
 import { ComputerBrowserProvider } from "./computer-browser.js";
 import { resolveBotWorkspacePath } from "./computer-support.js";
@@ -25,6 +27,24 @@ vi.mock("./purchase-service.js", async (importOriginal) => ({
     redactions: [],
   }),
 }));
+
+afterEach(() => installAuditEventStore(undefined));
+
+/** The `credential.used` rows of the organization's audit log. */
+function vaultUses() {
+  const rows: Array<Record<string, unknown>> = [];
+  installAuditEventStore({
+    auditEvent: {
+      createMany: async ({ data }: { data: Array<Record<string, unknown>> }) => {
+        rows.push(...data);
+        return { count: data.length };
+      },
+    },
+    space: { findUnique: async () => ({ organizationId: "org-1", name: "Home" }) },
+    member: { findUnique: async () => ({ role: "owner" }) },
+  } as never);
+  return () => rows.filter((row) => row.action === "credential.used");
+}
 
 const secret = 'zq"xv\\mk';
 const url = "https://example.test/echo";
@@ -245,6 +265,7 @@ describe("a run remembers the sites it typed an approved wallet purchase into", 
     [{ kind: "fill_card", ref: "e1", purchase: "p1", field: "number" }, "shop.example.test"],
     [{ kind: "fill_pay_token", purchase: "p1" }, "pay.example.test:8443"],
   ])("%j", async (action, host) => {
+    const used = vaultUses();
     const walletHosts = new Set<string>();
     const browser = new FakeBrowserProvider({
       pages: { [url]: { title: "Pay", html: "<input aria-label='Card' />" } },
@@ -281,32 +302,61 @@ describe("a run remembers the sites it typed an approved wallet purchase into", 
       { ...call, args: { actions: [action], purchaseApproval: approved } } as never,
     );
     expect([...walletHosts]).toEqual([]);
+    // A wallet's purchase card is not a vault item.
+    expect(used()).toEqual([]);
   });
 });
 
 describe("browser_act types a saved card only where the user approved it", () => {
-  /** `approval` names a card and site; it is bound to the card as saved unless it says otherwise. */
-  async function fillSavedCard(approval?: Record<string, unknown>) {
+  /**
+   * `approval` names a card and site; it is bound to the card as saved unless it says otherwise.
+   * The vault also holds a login for the page's site, and the run a login it didn't save.
+   */
+  async function fillSavedCard(approval?: Record<string, unknown>, fields = ["number"]) {
+    const used = vaultUses();
     const db = fakeDatabase();
     const secretStore = new EncryptedSecretStore("test-only-encryption-key");
     const scope = { userId: "u", spaceId: "space" };
-    await storeBotSecret({
-      prisma: db.prisma,
-      secretStore,
-      scope,
-      destination: { name: "visa", origin: "", auth: { type: "card" } },
-      plaintext: JSON.stringify({ number: "4242424242424242", expMonth: 8, expYear: 2030 }),
+    const login = encodeLoginSecret({
+      fields: [{ label: "Password", value: "saved-password-1", hidden: true }],
+    });
+    for (const [name, origin, type, plaintext] of [
+      ["visa", "", "card", '{"number":"4242424242424242","expMonth":8,"expYear":2030,"cvc":"737"}'],
+      ["site_login", "https://example.test", "login", login],
+    ] as const) {
+      await storeBotSecret({
+        prisma: db.prisma,
+        secretStore,
+        scope,
+        destination: { name, origin, auth: { type } },
+        plaintext,
+      });
+    }
+    const runLogin = {
+      kind: runLoginKind("run-1", "typed_login"),
+      ...(await secretStore.put(encodeRunLogin("https://example.test", login), context)),
+    };
+    Object.assign(db.prisma.secret, {
+      findFirst: async ({ where }: { where: { kind: string } }) =>
+        where.kind === runLogin.kind ? runLogin : null,
     });
     const walletHosts = new Set<string>();
     const secrets: string[] = [];
     const browser = new FakeBrowserProvider({
-      pages: { [url]: { title: "Pay", html: "<input aria-label='Card number' />" } },
+      pages: {
+        [url]: {
+          title: "Pay",
+          html: "<input aria-label='Card number' /><input aria-label='Expiry' /><input aria-label='CVC' /><input aria-label='Password' type='password' />",
+        },
+      },
     });
     await browser.navigate(computer, { url }, context);
     const ctx = {
       deps: { prisma: { ...db.prisma, taughtSkill: { findFirst: async () => null } }, secretStore },
       run: { ...scope, id: "run-1", botId: "b1" },
-      bot: { id: "b1" },
+      runId: "run-1",
+      bot: { id: "b1", name: "Shopper" },
+      thread: { id: "thread-1" },
       context,
       computer: {
         heldForTakeover: false,
@@ -319,36 +369,42 @@ describe("browser_act types a saved card only where the user approved it", () =>
       secrets,
       state: {
         walletHosts,
+        vaultUses: new Set<string>(),
         screen: { unchangedVisualStreak: { count: 0 } },
         reply: { pendingProgress: "", redactor: createStreamingRedactor([]) },
       },
     };
-    const action = {
-      kind: "fill_card",
-      ref: "e1",
-      card: "visa",
-      site: "https://example.test/checkout",
-      field: "number",
-    };
-    const result = await pageBrowserTool(
-      ctx as never,
-      {
-        name: "browser_act",
-        args: {
-          actions: [action],
-          ...(approval
-            ? {
-                cardApproval: {
-                  savedAt: db.rows()[0]!.updatedAt!.toISOString(),
-                  ...approval,
-                },
-              }
-            : {}),
-        },
-        finish: async (r: unknown) => r,
-      } as never,
+    const act = async (actions: unknown[], args = {}) =>
+      JSON.stringify(
+        await pageBrowserTool(
+          ctx as never,
+          {
+            name: "browser_act",
+            args: { actions, ...args },
+            finish: async (r: unknown) => r,
+          } as never,
+        ),
+      );
+    const seen = await act(
+      fields.map((field, index) => ({
+        kind: "fill_card",
+        ref: `e${index + 1}`,
+        card: "visa",
+        site: "https://example.test/checkout",
+        field,
+      })),
+      approval
+        ? { cardApproval: { savedAt: db.rows()[0]!.updatedAt!.toISOString(), ...approval } }
+        : {},
     );
-    return { seen: JSON.stringify(result), walletHosts, secrets };
+    const signIn = async (secret: string) => {
+      const page = (await browser.snapshot(computer, {}, context)) as {
+        elements: Array<{ ref: string; name: string }>;
+      };
+      const ref = page.elements.find((element) => element.name === "Password")!.ref;
+      return act([{ kind: "fill_secret", ref, secret, field: "Password" }]);
+    };
+    return { seen, walletHosts, secrets, used, db, signIn };
   }
 
   it("refuses without the user's approval of this card on this site", async () => {
@@ -357,35 +413,194 @@ describe("browser_act types a saved card only where the user approved it", () =>
       { card: "visa", site: "https://other.example.test", title: "Visa ·· 4242" },
       { card: "amex", site: "https://example.test", title: "Amex ·· 0005" },
     ]) {
-      const { seen, walletHosts, secrets } = await fillSavedCard(approval);
+      const { seen, walletHosts, secrets, used } = await fillSavedCard(approval);
       expect(seen).toContain("not approved");
       expect(walletHosts.size).toBe(0);
       expect(secrets).toEqual([]);
+      expect(used()).toEqual([]);
     }
   });
 
   it("types it once approved and hides the number, leaving the pay click to ask", async () => {
-    const { seen, walletHosts, secrets } = await fillSavedCard({
-      card: "visa",
-      site: "https://example.test",
-      title: "Visa ·· 4242",
-    });
-    expect(
-      (
-        await fillSavedCard({
-          card: "visa",
-          site: "https://example.test",
-          title: "Visa ·· 4242",
-          savedAt: "2026-01-01T00:00:00.000Z",
-        })
-      ).seen,
-    ).toContain("changed after the user approved");
+    const approved = { card: "visa", site: "https://example.test", title: "Visa ·· 4242" };
+    const { seen, walletHosts, secrets, used, db, signIn } = await fillSavedCard(approved, [
+      "number",
+      "expiry",
+      "cvc",
+    ]);
     expect(seen).not.toContain("not approved");
     expect(seen).not.toContain("could not");
     expect(seen).not.toContain("4242424242424242");
     expect(secrets).toContain("4242424242424242");
     // Approving the card named no amount, so placing the order still asks.
     expect(walletHosts.size).toBe(0);
+    // Each saved item the attempt typed is one use, however many fields or sign-ins; a login
+    // typed for this run only was never saved.
+    for (const secret of ["site_login", "site_login", "typed_login"]) {
+      expect(await signIn(secret)).toContain('\\"ok\\":true');
+    }
+    const [card, login] = db.rows();
+    const event = { organizationId: "org-1", spaceId: "space", spaceName: "Home" };
+    const bot = {
+      actorType: "bot",
+      actorId: "b1",
+      actorLabel: "Shopper",
+      action: "credential.used",
+    };
+    const run = {
+      outcome: "success",
+      runId: "run-1",
+      threadId: "thread-1",
+      ip: null,
+      userAgent: null,
+    };
+    // Whole rows, so it is clear no field value is in them.
+    expect(used()).toEqual(
+      [card!, login!].map((item, index) => ({
+        ...event,
+        ...bot,
+        ...run,
+        targetType: "vault_credential",
+        targetId: item.id,
+        targetLabel: item.name,
+        metadata: {
+          tool: "browser_act",
+          scope: "account",
+          name: item.name,
+          kind: ["card", "login"][index],
+          site: "https://example.test",
+        },
+      })),
+    );
+    expect(
+      (await fillSavedCard({ ...approved, savedAt: "2026-01-01T00:00:00.000Z" })).seen,
+    ).toContain("changed after the user approved");
+    // The run got the number, so a batch refused at a later step still records it.
+    const refused = await fillSavedCard(approved, ["number", "postal_code"]);
+    expect(refused.seen).toContain("no billing postal code");
+    expect(refused.used()).toHaveLength(1);
+  });
+});
+
+describe("browser_act signs in with a login that asks first only as the user approved", () => {
+  const site = "https://example.test";
+  async function signIn() {
+    const used = vaultUses();
+    const db = fakeDatabase();
+    const secretStore = new EncryptedSecretStore("test-only-encryption-key");
+    const scope = { userId: "u", spaceId: "space" };
+    await storeBotSecret({
+      prisma: db.prisma,
+      secretStore,
+      scope,
+      destination: { name: "work", origin: site, auth: { type: "login" } },
+      plaintext: encodeLoginSecret({
+        fields: [
+          { label: "Email", value: "alice@example.test", hidden: false },
+          { label: "Password", value: "saved-password-2", hidden: true },
+        ],
+      }),
+      policy: "ask",
+    });
+    Object.assign(db.prisma.secret, { findFirst: async () => null });
+    const secrets: string[] = [];
+    const browser = new FakeBrowserProvider({
+      pages: {
+        [`${site}/login`]: {
+          title: "Sign in",
+          html: "<input aria-label='Email' /><input aria-label='Password' type='password' />",
+        },
+      },
+    });
+    await browser.navigate(computer, { url: `${site}/login` }, context);
+    const page = (await browser.snapshot(computer, {}, context)) as {
+      elements: Array<{ ref: string; name: string }>;
+    };
+    const ref = (name: string) => page.elements.find((element) => element.name === name)!.ref;
+    const ctx = {
+      deps: { prisma: { ...db.prisma, taughtSkill: { findFirst: async () => null } }, secretStore },
+      run: { ...scope, id: "run-1", botId: "b1" },
+      runId: "run-1",
+      bot: { id: "b1", name: "Helper" },
+      thread: { id: "thread-1" },
+      context,
+      computer: {
+        heldForTakeover: false,
+        mode: "private",
+        checkpoint: { markDirty: () => {} },
+        get: async () => computer,
+      },
+      tools: { disabled: new Set<string>() },
+      providers: { browser },
+      secrets,
+      state: {
+        walletHosts: new Set<string>(),
+        vaultUses: new Set<string>(),
+        screen: { unchangedVisualStreak: { count: 0 } },
+        reply: { pendingProgress: "", redactor: createStreamingRedactor([]) },
+      },
+    };
+    const approval = () => ({
+      kind: "login",
+      login: "work",
+      site,
+      title: "example.test",
+      fields: ["Email", "Password"],
+      savedAt: db.rows()[0]!.updatedAt!.toISOString(),
+    });
+    const act = async (fields: string[], loginApproval?: unknown, secret = "work") =>
+      JSON.stringify(
+        await pageBrowserTool(
+          ctx as never,
+          {
+            name: "browser_act",
+            args: {
+              actions: fields.map((field) => ({
+                kind: "fill_secret",
+                ref: ref(field),
+                secret,
+                field,
+              })),
+              ...(loginApproval ? { loginApproval } : {}),
+            },
+            finish: async (r: unknown) => r,
+          } as never,
+        ),
+      );
+    return { db, secrets, used, approval, act, scope };
+  }
+
+  it("types every approved field of the call once approved, as one use", async () => {
+    const { secrets, used, approval, act } = await signIn();
+    // A name with spaces around it is the one the approval names, as the gate reads it.
+    const seen = await act(["Email", "Password"], approval(), " work ");
+    expect(seen).toContain('\\"ok\\":true');
+    expect(seen).not.toContain("saved-password-2");
+    expect(secrets).toContain("saved-password-2");
+    expect(used()).toHaveLength(1);
+  });
+
+  it("types nothing without an approval, or one for another field, site or version", async () => {
+    const { db, secrets, used, approval, act, scope } = await signIn();
+    for (const [fields, given] of [
+      [["Password"], undefined],
+      [["Password"], { ...approval(), fields: ["Email"] }],
+      [["Password"], { ...approval(), site: "https://other.example.test" }],
+      [["Password"], { ...approval(), login: "other" }],
+    ] as const) {
+      expect(await act([...fields], given)).toContain("not approved");
+    }
+    // Saved again while the approval waited: the user approved what it was.
+    const waited = approval();
+    await relabelVaultItem(db.prisma, scope, "work", { title: "Work" });
+    expect(await act(["Password"], waited)).toContain(
+      "This login changed after the user approved it, so nothing was typed. Call browser_act again to ask them.",
+    );
+    // Blocked, or limited to another bot, while it waited: it is as if never saved.
+    await relabelVaultItem(db.prisma, scope, "work", { bots: { allBots: false, botIds: [] } });
+    expect(await act(["Password"], approval())).toContain("unavailable");
+    expect(secrets).toEqual([]);
+    expect(used()).toEqual([]);
   });
 });
 
@@ -486,6 +701,7 @@ describe("browser_act fill_code", () => {
   }
 
   it("types the code once, never shows it to the bot, and has none left to type again", async () => {
+    const used = vaultUses();
     const { ctx, rows, fill } = await runWithCode();
     const first = await fill();
     expect(first).toContain('"ok":true');
@@ -496,6 +712,8 @@ describe("browser_act fill_code", () => {
     const second = await fill();
     expect(second).toContain("No code is waiting");
     expect(second).not.toContain(code);
+    // A code is typed for this run only and never saved in the vault.
+    expect(used()).toEqual([]);
   });
 
   it("refuses when the run has no code, and touches nothing", async () => {

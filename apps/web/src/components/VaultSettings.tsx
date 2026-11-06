@@ -10,14 +10,16 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
   ListSearchInput,
+  SectionHeading,
 } from "@rakazo/ui-web";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, Plus } from "lucide-react";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useRef, useState } from "react";
 import { useSpaceQueries } from "../lib/query";
 import { useSpaceRpc } from "../lib/space-rpc";
-import { errorText } from "../lib/user-error";
+import { errorCode, errorText } from "../lib/user-error";
 import { useIdentityConfirmation } from "./ConfirmIdentityDialog";
+import { useOwnSpaces } from "./integrations/space-availability";
 import { BotEmailAddresses } from "./vault/BotEmailAddresses";
 import { useVaultKindLabels, useVaultSubtitle, VaultTile } from "./vault/kinds";
 import { VaultItemDetail } from "./vault/VaultItemDetail";
@@ -44,11 +46,31 @@ export function VaultSettings({
   const rpc = useSpaceRpc();
   const queries = useSpaceQueries();
   const queryClient = useQueryClient();
-  const list = queries.vault.list.queryOptions({ input: { scope } });
+  const list = queries.vault.list.queryOptions({ input: { scope, askFirst: true } });
   const listQuery = useQuery({ ...list, refetchOnMount: "always" });
+  // Bots are chosen in the Space they're in, and a Space with its own vault never uses the account's.
+  const overrides = useQuery({
+    ...queries.spaceSettings.overrides.queryOptions(),
+    enabled: scope === "account",
+  });
+  const otherSpaces = useOwnSpaces().length > 1;
+  const ownVault = scope === "account" && Boolean(overrides.data?.includes("credentials"));
+  const botsNote = ownVault
+    ? t`This Space keeps its own vault, so its bots can't use account items.`
+    : scope === "account" && otherSpaces
+      ? t`This limits only this Space's bots. Your other Spaces choose for their own.`
+      : undefined;
   const items = listQuery.data;
   const { one, many } = useVaultKindLabels();
   const subtitle = useVaultSubtitle();
+  const emptyHeading = useId();
+  const hints: Record<VaultKind, string> = {
+    login: t`Signs in only on its own site`,
+    card: t`Asks you before every payment`,
+    contact: t`Fills in a name, address or phone`,
+    api_key: t`Lets a bot call a service`,
+    variable: t`Set in the bot's commands`,
+  };
   const [filter, setFilter] = useState<VaultKind | "all">("all");
   const [search, setSearch] = useState("");
   const [opened, setOpened] = useState<string | null>(null);
@@ -73,20 +95,53 @@ export function VaultSettings({
     }
   }
 
+  const activityKey = (name: string) => queries.vault.activity.queryKey({ input: { scope, name } });
+
   async function save(result: VaultEditorResult) {
     setBusy(true);
+    let saved: BotSecretMetadata;
+    const input = {
+      scope,
+      destination: result.destination,
+      ...(result.value !== undefined ? { value: result.value } : {}),
+      ...(result.title !== undefined ? { title: result.title } : {}),
+      ...(result.note !== undefined ? { note: result.note } : {}),
+      ...(result.allBots !== undefined ? { allBots: result.allBots } : {}),
+      ...(result.botIds ? { botIds: result.botIds } : {}),
+      askFirst: true,
+    };
     try {
-      await rpc.vault.put({
-        scope,
-        destination: result.destination,
-        ...(result.value !== undefined ? { value: result.value } : {}),
-        ...(result.title !== undefined ? { title: result.title } : {}),
-        ...(result.note !== undefined ? { note: result.note } : {}),
-      });
+      saved = await rpc.vault
+        .put({ ...input, ...(result.policy ? { policy: result.policy } : {}) })
+        // A server from before Ask first refuses it: saved without it, which the notice below says.
+        .catch((err: unknown) => {
+          if (result.policy !== "ask" || errorCode(err) !== "BAD_REQUEST") throw err;
+          return rpc.vault.put(input);
+        });
     } finally {
       setBusy(false);
     }
-    setError((await refresh()) ? null : t`Could not load credentials.`);
+    void queryClient.invalidateQueries({ queryKey: activityKey(saved.name) });
+    if (await refresh()) setError(null);
+    else {
+      // The save landed even though the list can't be read again, so it stays listed.
+      await writeSaved(queryClient, list.queryKey, (prev = []) => [
+        ...prev.filter((row) => row.name !== saved.name),
+        saved,
+      ]);
+      setError(t`Could not load credentials.`);
+    }
+    // A server from before Block drops it silently, but the item is saved, so say so.
+    if (result.policy === "ask" && saved.policy !== "ask") {
+      setOpened(saved.name);
+      setDetailError(t`Saved, but this server can't ask you first.`);
+    } else if (result.policy && saved.policy === undefined) {
+      setOpened(saved.name);
+      setDetailError(t`Saved, but this server can't block bots yet.`);
+    } else if (result.allBots === false && saved.allBots === undefined) {
+      setOpened(saved.name);
+      setDetailError(t`Saved, but this server can't limit an item to chosen bots.`);
+    }
   }
 
   async function reveal(name: string): Promise<VaultRevealed | null> {
@@ -129,6 +184,8 @@ export function VaultSettings({
     } finally {
       setBusy(false);
     }
+    // The name can be saved again at once, and a new item must not show this one's uses.
+    queryClient.removeQueries({ queryKey: activityKey(name) });
     closeItem();
     if (!(await refresh())) {
       await writeSaved(queryClient, list.queryKey, (prev = []) =>
@@ -155,9 +212,30 @@ export function VaultSettings({
         ...(revealed && "fields" in revealed ? { loginFields: revealed.fields } : {}),
         ...(revealed && "card" in revealed ? { card: revealed.card } : {}),
         ...(item.preview?.contact ? { contact: item.preview.contact } : {}),
+        ...(item.policy ? { policy: item.policy } : {}),
+        ...(item.allBots !== undefined
+          ? {
+              ...(ownVault ? {} : { access: { allBots: item.allBots, botIds: item.botIds ?? [] } }),
+              botsNote,
+            }
+          : {}),
       },
     });
   }
+
+  // A new item can be limited to chosen bots unless the saved ones show this server can't.
+  const newItem = (kind: VaultKind): Editing => ({
+    kind,
+    mode: "new",
+    ...(items?.length && items.every((item) => item.allBots === undefined)
+      ? {}
+      : {
+          initial: {
+            ...(ownVault ? {} : { access: { allBots: true, botIds: [] } }),
+            botsNote,
+          },
+        }),
+  });
 
   const contacts = (items ?? []).flatMap((item) =>
     item.auth?.type === "contact" ? [{ name: item.name, title: item.title }] : [],
@@ -212,6 +290,7 @@ export function VaultSettings({
       <section data-testid="vault">
         <VaultItemDetail
           key={openedItem.name}
+          scope={scope}
           item={openedItem}
           contactTitles={new Map(contacts.map((contact) => [contact.name, contact.title]))}
           busy={busy}
@@ -227,44 +306,18 @@ export function VaultSettings({
 
   return (
     <section data-testid="vault" className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        {kindsShown.length > 1 ? (
-          <fieldset className="m-0 flex min-w-0 flex-wrap gap-1 border-0 p-0" aria-label={t`Show`}>
-            {(["all", ...kindsShown] as const).map((kind) => (
-              <Button
-                key={kind}
-                type="button"
-                variant="ghost"
-                size="sm"
-                aria-pressed={activeFilter === kind}
-                data-testid={`vault-filter-${kind}`}
-                className="rounded-full text-muted-foreground aria-pressed:bg-accent aria-pressed:text-foreground"
-                onClick={() => setFilter(kind)}
-              >
-                {kind === "all" ? t`All` : many[kind]}
-                <span className="text-faint-foreground tabular-nums">
-                  {kind === "all" ? items?.length : counts.get(kind)}
-                </span>
-              </Button>
-            ))}
-          </fieldset>
-        ) : null}
-        <span className="flex-1" />
-        {searching ? (
-          <div className="w-44">
-            <ListSearchInput
-              query={search}
-              setQuery={setSearch}
-              label={t`Search Vault`}
-              placeholder={t`Search`}
-            />
-          </div>
-        ) : null}
+      <div className="flex items-start gap-4">
+        <p
+          data-testid="vault-intro"
+          className="min-w-0 flex-1 ps-1 pt-1 text-body-sm text-muted-foreground"
+        >
+          <Trans>Logins, cards and details your bots can use for you.</Trans>
+        </p>
         <DropdownMenu>
           <DropdownMenuTrigger
             data-testid="vault-new"
             disabled={busy}
-            render={<Button size="sm" className="rounded-full" />}
+            render={<Button size="sm" className="shrink-0 rounded-full" />}
           >
             <Plus />
             <Trans>New</Trans>
@@ -276,7 +329,7 @@ export function VaultSettings({
                 {kind === "api_key" ? <DropdownMenuSeparator /> : null}
                 <DropdownMenuItem
                   data-testid={`vault-new-${kind}`}
-                  onClick={() => setEditing({ kind, mode: "new" })}
+                  onClick={() => setEditing(newItem(kind))}
                 >
                   <VaultTile kind={kind} title="" className="size-5 rounded-none bg-transparent" />
                   {one[kind]}
@@ -286,6 +339,76 @@ export function VaultSettings({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      {kindsShown.length > 1 || searching ? (
+        <div className="flex flex-wrap items-center gap-2">
+          {kindsShown.length > 1 ? (
+            <fieldset
+              className="m-0 flex min-w-0 flex-wrap gap-1 border-0 p-0"
+              aria-label={t`Show`}
+            >
+              {(["all", ...kindsShown] as const).map((kind) => (
+                <Button
+                  key={kind}
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-pressed={activeFilter === kind}
+                  data-testid={`vault-filter-${kind}`}
+                  className="rounded-full text-muted-foreground aria-pressed:bg-accent aria-pressed:text-foreground"
+                  onClick={() => setFilter(kind)}
+                >
+                  {kind === "all" ? t`All` : many[kind]}
+                  <span className="text-faint-foreground tabular-nums">
+                    {kind === "all" ? items?.length : counts.get(kind)}
+                  </span>
+                </Button>
+              ))}
+            </fieldset>
+          ) : null}
+          <span className="flex-1" />
+          {searching ? (
+            <div className="w-44">
+              <ListSearchInput
+                query={search}
+                setQuery={setSearch}
+                label={t`Search Vault`}
+                placeholder={t`Search`}
+              />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {/* A read that failed can't show the Vault is empty. */}
+      {items?.length === 0 && !listQuery.isError && !error ? (
+        <div data-testid="vault-empty" className="space-y-2 pt-2">
+          <SectionHeading id={emptyHeading} className="px-1">
+            <Trans>Add your first item</Trans>
+          </SectionHeading>
+          <ul aria-labelledby={emptyHeading} className="overflow-hidden rounded-xl bg-muted/50">
+            {VAULT_KINDS.map((kind) => (
+              <li key={kind} className="border-t border-border first:border-t-0">
+                <button
+                  type="button"
+                  data-testid={`vault-start-${kind}`}
+                  disabled={busy}
+                  className="flex w-full items-center gap-3 px-3.5 py-2.5 text-start hover:bg-accent focus-visible:bg-accent focus-visible:outline-none disabled:opacity-50"
+                  onClick={() => setEditing(newItem(kind))}
+                >
+                  <VaultTile kind={kind} title="" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-body font-medium text-foreground">{one[kind]}</span>
+                    <span className="block text-body-sm text-muted-foreground">{hints[kind]}</span>
+                  </span>
+                  <Plus className="size-4 shrink-0 text-faint-foreground" />
+                </button>
+              </li>
+            ))}
+          </ul>
+          <p className="px-1 text-body-sm text-muted-foreground">
+            <Trans>Bots type saved passwords and card numbers without seeing them.</Trans>
+          </p>
+        </div>
+      ) : null}
       {listQuery.isError ? (
         <p className="text-body-sm text-destructive">
           <Trans>Could not load credentials.</Trans>

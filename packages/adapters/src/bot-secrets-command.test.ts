@@ -387,6 +387,32 @@ describe("shell command environment", () => {
     for (const form of encoded) expect(output.stdout).not.toContain(form);
   });
 
+  it("redacts the value a bot's command gets even if it is replaced before the second read", async () => {
+    const db = fakeDatabase();
+    await save(db, "api-token", "fake-first-token");
+    // The vault changes right after the read whose values the command gets.
+    const findMany = vi.mocked(db.prisma.vaultCredential.findMany);
+    const read = findMany.getMockImplementation()!;
+    let replaced = false;
+    findMany.mockImplementation((async (args: Parameters<typeof read>[0]) => {
+      const rows = (await read(args)).map((row) => ({ ...row }));
+      if (!replaced && args?.select?.ciphertext) {
+        replaced = true;
+        await save(db, "api-token", "fake-second-token");
+      }
+      return rows;
+    }) as never);
+    const runSecrets: string[] = [];
+    const { env } = await shellCommandEnvironment({
+      prisma: db.prisma,
+      secretStore,
+      scope: { ...scope, botId: "bot-1" },
+      registerRedactions: (values) => runSecrets.push(...values),
+    });
+    expect(env).toEqual({ API_TOKEN: "fake-first-token" });
+    expect(redactSecrets("fake-first-token fake-second-token", runSecrets)).not.toMatch(/fake-/);
+  });
+
   it("applies a variable added, replaced, or removed between two commands", async () => {
     const db = fakeDatabase();
     const runCommand = commandRunner(db);

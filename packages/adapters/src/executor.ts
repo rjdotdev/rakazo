@@ -62,6 +62,7 @@ import { loadBotMessageContext } from "./bot-messages.js";
 import {
   commandCredentialRedactions,
   loadBotCommandEnvironment,
+  loadCommandRedactions,
   loadLoginPasswordRedactions,
   loadRunCodeRedactions,
   loadRunLoginRedactions,
@@ -624,6 +625,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
           savedSkills,
           agentSkills,
           initialBotCommandEnvironment,
+          commandRedactions,
           savedLoginPasswordRedactions,
           purchaseRedactions,
           runLoginRedactions,
@@ -668,6 +670,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
             userId: run.userId,
           }),
           loadBotCommandEnvironment(deps.prisma, deps.secretStore, run),
+          loadCommandRedactions(deps.prisma, deps.secretStore, run),
           loadLoginPasswordRedactions(deps.prisma, deps.secretStore, run),
           deps.paymentWallet ? loadPurchaseRedactions(deps, run) : [],
           loadRunLoginRedactions(deps.prisma, deps.secretStore, run, run.id),
@@ -696,7 +699,10 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
               thread.nextMessageSeq)
             : thread.nextMessageSeq;
         // Encoded forms too: read_file redacts with these values before any shell command runs.
-        runSecrets.push(...commandCredentialRedactions(initialBotCommandEnvironment));
+        runSecrets.push(
+          ...commandCredentialRedactions(initialBotCommandEnvironment),
+          ...commandRedactions,
+        );
         // A login filled in an earlier run may still be on its page, and anything this run reads
         // or is given may contain it, so every run hides its saved passwords before the model runs.
         runSecrets.push(
@@ -1569,6 +1575,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
           ownInstructionsBaseline: bot.instructions ?? "",
           earlierAttempt: undefined,
           walletHosts: new Set(),
+          vaultUses: new Set(),
           handedOff: false,
           terminalCheckpointComplete: false,
         };

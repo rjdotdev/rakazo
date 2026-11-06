@@ -1,8 +1,10 @@
-import type { BotSecretMetadata, ContactFields } from "@rakazo/contracts";
-import { cardExpiry, commandVariableName, vaultKind } from "@rakazo/contracts";
+import type { BotSecretMetadata, ContactFields, VaultUse } from "@rakazo/contracts";
+import { cardExpiry, commandVariableName, hasVaultAccess, vaultKind } from "@rakazo/contracts";
 import * as Clipboard from "expo-clipboard";
+import { useState } from "react";
 import { Modal, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { formatActivityRelativeTime } from "../lib/activity";
 import { useI18n } from "../lib/i18n";
 import { native, useThemedStyles } from "../lib/native";
 import { siteHost } from "../lib/secret-destination";
@@ -20,6 +22,8 @@ type DetailRow = { label: string; value: string; hidden?: boolean };
 export function VaultItemSheet({
   item,
   billingTitle,
+  uses,
+  notice,
   busy,
   onClose,
   onShow,
@@ -29,6 +33,8 @@ export function VaultItemSheet({
   item: BotSecretMetadata;
   /** The title of the contact a card is billed to. */
   billingTitle?: string;
+  uses: VaultUse[];
+  notice?: string;
   busy: boolean;
   onClose: () => void;
   onShow: () => void;
@@ -43,6 +49,8 @@ export function VaultItemSheet({
   const symbol = kind ? vaultKindSymbol(kind) : { ios: "questionmark", android: "help" };
   const rows = readable ? detailRows(readable, billingTitle) : [];
   const copy = (text: string) => void Clipboard.setStringAsync(text).catch(() => undefined);
+  const [usesOpen, setUsesOpen] = useState(false);
+  const latest = uses[0];
 
   function detailRows(entry: NonNullable<typeof readable>, billing?: string): DetailRow[] {
     const { preview } = entry;
@@ -89,6 +97,18 @@ export function VaultItemSheet({
       list.push({ label: t("Value"), ...hidden });
     }
     add(t("When to use"), entry.note);
+    if (hasVaultAccess(vaultKind(entry.auth.type)) && entry.policy === "off")
+      add(t("Bots"), t("Block"));
+    else
+      add(
+        t("Bots"),
+        [
+          entry.policy === "ask" ? t("Ask first") : "",
+          entry.allBots === false ? (entry.botIds?.length ? t("Chosen bots") : t("No bots")) : "",
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      );
     return list;
   }
 
@@ -128,6 +148,7 @@ export function VaultItemSheet({
               {kind ? <Text style={styles.kind}>{vaultKindLabel(kind)}</Text> : null}
             </View>
           </View>
+          {notice ? <Text style={styles.unreadable}>{notice}</Text> : null}
           {readable ? null : (
             <Text style={styles.unreadable}>
               {t("These saved settings can't be read. Remove it and add it again.")}
@@ -154,6 +175,35 @@ export function VaultItemSheet({
               />
             ))}
           </SettingsGroup>
+          {latest ? (
+            <SettingsGroup>
+              <SettingsRow
+                accessibilityRole="button"
+                accessibilityState={{ expanded: usesOpen }}
+                title={t("Used {when} by {bot}", {
+                  when: formatActivityRelativeTime(latest.at),
+                  bot: latest.botName,
+                })}
+                chevron={usesOpen ? "down" : "right"}
+                onPress={() => setUsesOpen(!usesOpen)}
+              />
+              {usesOpen
+                ? uses.map((use, index) => (
+                    <SettingsRow
+                      key={`${use.at}-${index}`}
+                      title={use.botName}
+                      detail={[
+                        use.chat && use.chat.title !== use.botName ? use.chat.title : "",
+                        use.site ? siteHost(use.site) : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                      value={formatActivityRelativeTime(use.at)}
+                    />
+                  ))
+                : null}
+            </SettingsGroup>
+          ) : null}
           <SettingsGroup>
             <SettingsRow
               key="remove"

@@ -26,6 +26,8 @@ const state = vi.hoisted(() => ({
   spaceId: undefined as string | undefined,
   focused: true,
   credentials: [] as Credential[],
+  spaces: [] as { id: string }[],
+  overrides: [] as string[],
   setOptions: vi.fn(),
 }));
 const { element } = vi.hoisted(() => ({
@@ -153,7 +155,16 @@ vi.mock("../components/native-segmented-control", () => ({
     ),
 }));
 vi.mock("../components/settings-group", () => ({
-  SettingsGroup: element("section"),
+  SettingsFooter: element("small"),
+  SettingsGroup: ({
+    label,
+    footer,
+    children,
+  }: {
+    label?: string;
+    footer?: string;
+    children: ReactNode;
+  }) => createElement("section", { "aria-label": label }, children, footer),
   SettingsRow: ({
     title,
     detail,
@@ -174,6 +185,8 @@ vi.mock("../components/vault-item-sheet", () => ({
   VaultItemSheet: ({
     item,
     billingTitle,
+    uses,
+    notice,
     onShow,
     onEdit,
     onRemove,
@@ -181,6 +194,8 @@ vi.mock("../components/vault-item-sheet", () => ({
   }: {
     item: Credential;
     billingTitle?: string;
+    uses: Array<{ botName: string }>;
+    notice?: string;
     onShow: () => void;
     onEdit: () => void;
     onRemove: () => void;
@@ -188,7 +203,13 @@ vi.mock("../components/vault-item-sheet", () => ({
   }) =>
     createElement(
       "dialog",
-      { open: true, "aria-label": `Detail ${item.name}`, "data-billing": billingTitle },
+      {
+        open: true,
+        "aria-label": `Detail ${item.name}`,
+        "data-billing": billingTitle,
+        "data-uses": uses.map((use) => use.botName).join(","),
+        "data-notice": notice,
+      },
       ...[
         ["Show", onShow],
         ["Edit", onEdit],
@@ -204,41 +225,84 @@ vi.mock("../components/vault-item-editor", () => ({
     kind,
     item,
     contacts,
+    bots,
+    botsNote,
     onClose,
     onSave,
   }: {
     kind: string;
     item?: Credential;
     contacts: { key: string; label: string }[];
+    bots?: { name: string }[];
+    botsNote?: string;
     onClose: () => void;
-    onSave: (save: unknown) => Promise<void>;
+    onSave: (save: unknown, policy?: unknown, access?: unknown) => Promise<void>;
   }) => {
     const [failed, setFailed] = useState(false);
+    const [saved, setSaved] = useState(false);
+    const save = item
+      ? { destination: { name: item.name, auth: item.auth }, title: "Renamed", note: "" }
+      : {
+          destination: { name: "netbird-key", auth: { type: "command" } },
+          value: "example-value",
+          title: "",
+          note: "",
+        };
     return createElement(
       "dialog",
       {
         open: true,
         "aria-label": `Edit ${kind} ${item?.name ?? "new"}`,
         "data-contacts": contacts.map((contact) => contact.label).join(","),
+        "data-bots": bots ? bots.map((bot) => bot.name).join(",") : "none",
+        "data-bots-note": botsNote,
       },
       createElement(
         "button",
         {
           type: "button",
           onClick: () =>
-            onSave(
-              item
-                ? { destination: { name: item.name, auth: item.auth }, title: "Renamed", note: "" }
-                : {
-                    destination: { name: "netbird-key", auth: { type: "command" } },
-                    value: "example-value",
-                    title: "",
-                    note: "",
-                  },
-            ).then(onClose, () => setFailed(true)),
+            onSave(save, undefined, { allBots: false, botIds: ["bot-1"] }).then(
+              () => setSaved(true),
+              () => setFailed(true),
+            ),
+        },
+        "Chosen",
+      ),
+      createElement(
+        "button",
+        {
+          type: "button",
+          onClick: () =>
+            onSave(save, "ask").then(
+              () => setSaved(true),
+              () => setFailed(true),
+            ),
+        },
+        "Ask first",
+      ),
+      createElement(
+        "button",
+        {
+          type: "button",
+          onClick: () => onSave(save).then(onClose, () => setFailed(true)),
         },
         "Save",
       ),
+      createElement(
+        "button",
+        {
+          type: "button",
+          // Closes only on Close, as the real sheet closes after its save, a frame later.
+          onClick: () =>
+            onSave(save, "off").then(
+              () => setSaved(true),
+              () => setFailed(true),
+            ),
+        },
+        "Block",
+      ),
+      saved ? createElement("button", { type: "button", onClick: onClose }, "Close") : null,
       failed ? "Failed" : null,
     );
   },
@@ -293,6 +357,8 @@ beforeEach(() => {
   state.copy.mockClear();
   state.confirmIdentity.mockReset().mockResolvedValue(true);
   state.credentials = [credential({}), variable];
+  state.spaces = [{ id: "space-1" }];
+  state.overrides = [];
   state.rpc.mockReset().mockImplementation(async (proc: string, input: Record<string, unknown>) => {
     if (proc === "vault/list") return state.credentials;
     if (proc === "vault/put") {
@@ -303,6 +369,8 @@ beforeEach(() => {
         : credential({ ...destination, origin: destination.origin ?? "", title: destination.name });
     }
     if (proc === "vault/remove") return { ok: true };
+    if (proc === "vault/activity")
+      return input.name === "github" ? [{ botName: "Research bot" }, { botName: "Helper" }] : [];
     if (proc === "vault/reveal") {
       if (input.name === "example-login") {
         return {
@@ -318,6 +386,8 @@ beforeEach(() => {
       }
       return { value: "example-value" };
     }
+    if (proc === "spaces/list") return { spaces: state.spaces };
+    if (proc === "spaceSettings/overrides") return state.overrides;
     throw new Error(`Unexpected RPC: ${proc}`);
   });
   container = document.createElement("div");
@@ -332,7 +402,7 @@ afterEach(() => {
 
 it("lists the account vault with each item's title and subtitle", async () => {
   await render();
-  expect(state.rpc).toHaveBeenCalledWith("vault/list", { scope: "account" });
+  expect(state.rpc).toHaveBeenCalledWith("vault/list", { scope: "account", askFirst: true });
   expect(rows()).toEqual(["api.github.com: API key", "netbird-key: $NETBIRD_KEY"]);
   expect([...menu("New item").querySelectorAll("button")].map((node) => node.textContent)).toEqual([
     "Login",
@@ -341,6 +411,50 @@ it("lists the account vault with each item's title and subtitle", async () => {
     "API key",
     "Variable",
   ]);
+});
+
+it("says what the Vault is for, with or without items", async () => {
+  await render();
+  expect(container.querySelector("small")?.textContent).toBe(
+    "Logins, cards and details your bots can use for you.",
+  );
+  expect(menu("Add your first item")).toBeNull();
+});
+
+it("offers each kind to add, and what it does, while the vault is empty", async () => {
+  state.credentials = [];
+  await render();
+  expect(container.querySelector("small")).not.toBeNull();
+  const empty = menu("Add your first item");
+  expect(rows()).toEqual([
+    "Login: Signs in only on its own site",
+    "Card: Asks you before every payment",
+    "Contact: Fills in a name, address or phone",
+    "API key: Lets a bot call a service",
+    "Variable: Set in the bot's commands",
+  ]);
+  expect(empty.textContent).toContain(
+    "Bots type saved passwords and card numbers without seeing them.",
+  );
+
+  await act(async () => row("Contact").click());
+  expect(container.querySelector('dialog[aria-label="Edit contact new"]')).not.toBeNull();
+  await act(async () => button("Save", dialog())!.click());
+  expect(menu("Add your first item")).toBeNull();
+  expect(rows()).toEqual(["netbird-key: $NETBIRD_KEY"]);
+});
+
+it("doesn't call the vault empty when reading it again fails", async () => {
+  state.credentials = [];
+  await render();
+  expect(menu("Add your first item")).not.toBeNull();
+  state.focused = false;
+  await render();
+  state.rpc.mockRejectedValueOnce(new Error("offline"));
+  state.focused = true;
+  await render();
+  expect(container.textContent).toContain("Something went wrong. Try again.");
+  expect(menu("Add your first item")).toBeNull();
 });
 
 it("filters by kind only once there are two kinds, and searches only a long list", async () => {
@@ -373,7 +487,7 @@ it("edits a Space's own vault through that Space", async () => {
   await render();
   expect(state.rpc).toHaveBeenCalledWith(
     "vault/list",
-    { scope: "space" },
+    { scope: "space", askFirst: true },
     { requestContext: { headers: { space: "space-work" } } },
   );
 
@@ -387,6 +501,7 @@ it("edits a Space's own vault through that Space", async () => {
       value: "example-value",
       title: "",
       note: "",
+      askFirst: true,
     },
     { requestContext: { headers: { space: "space-work" } } },
   );
@@ -411,10 +526,173 @@ it("keeps the editor open when saving fails", async () => {
   expect(dialog().textContent).toContain("Failed");
 });
 
+it("saves a new item with Block, and opens it saying an older server dropped the Block", async () => {
+  await render();
+  await act(async () => button("Variable", menu("New item"))!.click());
+  await act(async () => button("Block", dialog())!.click());
+  const puts = state.rpc.mock.calls.filter(([procedure]) => procedure === "vault/put");
+  expect(puts).toEqual([
+    [
+      "vault/put",
+      {
+        scope: "account",
+        destination: { name: "netbird-key", auth: { type: "command" } },
+        value: "example-value",
+        title: "",
+        note: "",
+        policy: "off",
+        askFirst: true,
+      },
+    ],
+  ]);
+  // The saved item came back without the setting. Its sheet waits for the editor to go, then
+  // opens with the notice: never two sheets at once.
+  const detail = () => container.querySelector('dialog[aria-label="Detail netbird-key"]');
+  expect(detail()).toBeNull();
+  await act(async () => button("Close", dialog())!.click());
+  expect(container.querySelector('dialog[aria-label^="Edit"]')).toBeNull();
+  expect(detail()?.getAttribute("data-notice")).toBe(
+    "Saved, but this server can't block bots yet.",
+  );
+  // The notice belongs to that save: a later open of the item doesn't repeat it.
+  await act(async () => button("Edit", dialog())!.click());
+  await act(async () => button("Save", dialog())!.click());
+  await open("Renamed");
+  expect(detail()?.getAttribute("data-notice")).toBeNull();
+});
+
+it("offers the owner's bots once the server keeps a choice, and says when it didn't", async () => {
+  state.credentials = state.credentials.map((entry) => ({ ...entry, allBots: true, botIds: [] }));
+  const listBots = state.rpc.getMockImplementation()!;
+  state.rpc.mockImplementation(async (proc: string, input: Record<string, unknown>) => {
+    if (proc === "bots/list")
+      return [
+        { id: "bot-1", name: "Ada", archivedAt: null },
+        { id: "bot-old", name: "Old", archivedAt: "2026-10-01T00:00:00.000Z" },
+      ];
+    if (proc === "spaceSettings/overrides") return state.overrides;
+    if (proc === "spaces/list") return { spaces: state.spaces };
+    if (proc === "vault/put") {
+      // An older server saves the item and drops the bots chosen for it.
+      const {
+        allBots: _,
+        botIds: __,
+        ...saved
+      } = (await listBots(proc, input)) as Credential & {
+        allBots?: boolean;
+        botIds?: string[];
+      };
+      return saved;
+    }
+    return listBots(proc, input);
+  });
+  await render();
+  await act(async () => button("Variable", menu("New item"))!.click());
+  expect(dialog().getAttribute("data-bots")).toBe("Ada");
+  await act(async () => button("Chosen", dialog())!.click());
+  expect(state.rpc).toHaveBeenLastCalledWith(
+    "vault/put",
+    expect.objectContaining({ allBots: false, botIds: ["bot-1"] }),
+  );
+  await act(async () => button("Close", dialog())!.click());
+  expect(
+    container.querySelector('dialog[aria-label="Detail netbird-key"]')?.getAttribute("data-notice"),
+  ).toBe("Saved, but this server can't limit an item to chosen bots.");
+});
+
+it("reads the owner's bots again for each edit", async () => {
+  state.credentials = state.credentials.map((entry) => ({ ...entry, allBots: true, botIds: [] }));
+  let bots = [{ id: "bot-1", name: "Ada", archivedAt: null }];
+  const vaultRpc = state.rpc.getMockImplementation()!;
+  state.rpc.mockImplementation(async (proc: string, input: Record<string, unknown>) =>
+    proc === "bots/list" ? bots : vaultRpc(proc, input),
+  );
+  await render();
+  await act(async () => button("Variable", menu("New item"))!.click());
+  expect(dialog().getAttribute("data-bots")).toBe("Ada");
+  await act(async () => button("Save", dialog())!.click());
+  bots = [...bots, { id: "bot-2", name: "Grace", archivedAt: null }];
+  await act(async () => button("Variable", menu("New item"))!.click());
+  expect(dialog().getAttribute("data-bots")).toBe("Ada,Grace");
+});
+
+it("offers every bot of a shared Space, one another member made too", async () => {
+  state.credentials = state.credentials.map((entry) => ({ ...entry, allBots: true, botIds: [] }));
+  const vaultRpc = state.rpc.getMockImplementation()!;
+  // Ada is this member's bot; Grace was made by another member of the Space.
+  state.rpc.mockImplementation(async (proc: string, input: Record<string, unknown>) =>
+    proc === "bots/list"
+      ? [
+          { id: "bot-1", name: "Ada", archivedAt: null },
+          { id: "bot-2", name: "Grace", archivedAt: null },
+        ]
+      : vaultRpc(proc, input),
+  );
+  await render();
+  await act(async () => button("Variable", menu("New item"))!.click());
+  expect(dialog().getAttribute("data-bots")).toBe("Ada,Grace");
+});
+
+it("asks for Ask first by name, and says when the server didn't keep it", async () => {
+  await render();
+  expect(state.rpc).toHaveBeenCalledWith("vault/list", { scope: "account", askFirst: true });
+  // A server from before Ask first refuses it, as its schema does.
+  const vaultRpc = state.rpc.getMockImplementation()!;
+  state.rpc.mockImplementation(async (proc: string, input: Record<string, unknown>) => {
+    if (proc === "vault/put" && input.policy === "ask")
+      throw Object.assign(new Error("Input validation failed"), { code: "BAD_REQUEST" });
+    return vaultRpc(proc, input);
+  });
+  await act(async () => button("Variable", menu("New item"))!.click());
+  await act(async () => button("Ask first", dialog())!.click());
+  const puts = state.rpc.mock.calls.filter(([proc]) => proc === "vault/put");
+  expect(puts.map(([, input]) => (input as { policy?: string }).policy)).toEqual([
+    "ask",
+    undefined,
+  ]);
+  await act(async () => button("Close", dialog())!.click());
+  expect(
+    container.querySelector('dialog[aria-label="Detail netbird-key"]')?.getAttribute("data-notice"),
+  ).toBe("Saved, but this server can't ask you first.");
+});
+
+it("says an account item's other Spaces choose their own bots, and offers none from a Space with its own vault", async () => {
+  state.credentials = state.credentials.map((entry) => ({ ...entry, allBots: true, botIds: [] }));
+  const vaultRpc = state.rpc.getMockImplementation()!;
+  state.rpc.mockImplementation(async (proc: string, input: Record<string, unknown>) =>
+    proc === "bots/list" ? [{ id: "bot-1", name: "Ada", archivedAt: null }] : vaultRpc(proc, input),
+  );
+  state.spaces = [{ id: "space-1" }, { id: "space-2" }];
+  await render();
+  await act(async () => button("Variable", menu("New item"))!.click());
+  expect(dialog().getAttribute("data-bots")).toBe("Ada");
+  expect(dialog().getAttribute("data-bots-note")).toBe(
+    "This limits only this Space's bots. Your other Spaces choose for their own.",
+  );
+  act(() => root.unmount());
+  root = createRoot(container);
+  state.overrides = ["credentials"];
+  await render();
+  await act(async () => button("Variable", menu("New item"))!.click());
+  expect(dialog().getAttribute("data-bots")).toBe("none");
+  expect(dialog().getAttribute("data-bots-note")).toBe(
+    "This Space keeps its own vault, so its bots can't use account items.",
+  );
+});
+
+it("offers no choice of bots when the saved items show the server can't keep one", async () => {
+  await render();
+  await act(async () => button("Variable", menu("New item"))!.click());
+  expect(dialog().getAttribute("data-bots")).toBe("none");
+  expect(state.rpc).not.toHaveBeenCalledWith("bots/list");
+});
+
 it("opens an item's detail on tap, and edits it from there or from its menu", async () => {
   await render();
   await open("api.github.com");
   expect(container.querySelector('dialog[aria-label="Detail github"]')).not.toBeNull();
+  expect(state.rpc).toHaveBeenCalledWith("vault/activity", { scope: "account", name: "github" });
+  expect(dialog()?.getAttribute("data-uses")).toBe("Research bot,Helper");
   await act(async () => button("Edit", dialog())!.click());
   expect(container.querySelector('dialog[aria-label="Edit api_key github"]')).not.toBeNull();
   await act(async () => button("Save", dialog())!.click());
@@ -423,6 +701,7 @@ it("opens an item's detail on tap, and edits it from there or from its menu", as
     destination: { name: "github", auth: { type: "bearer" } },
     title: "Renamed",
     note: "",
+    askFirst: true,
   });
   expect(rows()[0]).toBe("Renamed: API key · api.github.com");
 
@@ -448,6 +727,16 @@ it("offers saved contacts for a card's billing, and names a card's billing conta
   expect(dialog().dataset.billing).toBe("Home");
   await act(async () => button("Edit", dialog())!.click());
   expect(dialog().dataset.contacts).toBe("Home");
+});
+
+it("never shows an item's earlier uses once reading them again fails", async () => {
+  await render();
+  await open("api.github.com");
+  expect(dialog()?.getAttribute("data-uses")).toBe("Research bot,Helper");
+  await act(async () => button("Done", dialog())!.click());
+  state.rpc.mockRejectedValueOnce(new Error("offline"));
+  await open("api.github.com");
+  expect(dialog()?.getAttribute("data-uses")).toBe("");
 });
 
 it("removes an item only once the destructive alert is confirmed", async () => {
