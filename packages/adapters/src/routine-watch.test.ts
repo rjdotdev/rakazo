@@ -934,6 +934,80 @@ describe("tickRoutineWatch on a computer", () => {
     expect(gone.note).not.toContain(password);
   });
 
+  it("retries a command check, not pauses it, while the key manager is down", async () => {
+    const vault = fakeDatabase();
+    await vault.prisma.vaultCredential.create({
+      data: {
+        id: "site-login",
+        ...accountVault,
+        name: "site_login",
+        origin: "https://login.example.test",
+        auth: { type: "login" },
+        ciphertext: "rkz1:vault-key:sealed",
+      },
+    });
+    vi.mocked(provisionComputer).mockClear();
+    const { deps, routine, updateMany, messages, execute } = setupComputer(
+      { kind: "command", command: "check-order" },
+      { stdout: "ok" },
+      undefined,
+      { vault, secretStore: { load: async () => "unused" } },
+    );
+    // The login is under a vault key the key manager can't unwrap right now.
+    Object.assign(deps.prisma, {
+      $contentEncryption: () => ({
+        ring: { byId: async () => Promise.reject(new Error("fake key manager outage")) },
+      }),
+    });
+    expect(await tickRoutineWatch(deps, routine, target, scheduledAt)).toEqual({ run: false });
+    expect(execute).not.toHaveBeenCalled();
+    // Deferred before the computer is woken for it.
+    expect(provisionComputer).not.toHaveBeenCalled();
+    expect(messages).toEqual([]);
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: "routine-1", userId: "user-1", active: true, nextRunAt: scheduledAt },
+      data: { nextRunAt: expect.any(Date) },
+    });
+    expect(deps.jobs.enqueue).toHaveBeenCalled();
+  });
+
+  it("retries a command check whose command variable can't be loaded while the key manager is down", async () => {
+    const vault = fakeDatabase();
+    await vault.prisma.vaultCredential.create({
+      data: {
+        id: "gh-token",
+        ...accountVault,
+        name: "gh_token",
+        origin: "",
+        auth: { type: "command" },
+        ciphertext: "rkz1:vault-key:sealed",
+      },
+    });
+    vi.mocked(provisionComputer).mockClear();
+    const { deps, routine, updateMany, messages, execute } = setupComputer(
+      { kind: "command", command: "check-order" },
+      { stdout: "ok" },
+      undefined,
+      { vault, secretStore: { load: async () => "unused" } },
+    );
+    // The variable is under a vault key the key manager can't unwrap right now.
+    Object.assign(deps.prisma, {
+      $contentEncryption: () => ({
+        ring: { byId: async () => Promise.reject(new Error("fake key manager outage")) },
+      }),
+    });
+    expect(await tickRoutineWatch(deps, routine, target, scheduledAt)).toEqual({ run: false });
+    expect(execute).not.toHaveBeenCalled();
+    // Deferred before the computer is woken for it.
+    expect(provisionComputer).not.toHaveBeenCalled();
+    expect(messages).toEqual([]);
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: "routine-1", userId: "user-1", active: true, nextRunAt: scheduledAt },
+      data: { nextRunAt: expect.any(Date) },
+    });
+    expect(deps.jobs.enqueue).toHaveBeenCalled();
+  });
+
   it("scrubs a quote and backslash inside tracked command JSON", async () => {
     const secret = 'ghp_quote"slash\\secretToken';
     const vault = fakeDatabase();
