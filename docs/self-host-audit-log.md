@@ -14,6 +14,7 @@ Organization owners and admins can export it as JSON Lines, and operators can fo
 | `approval.auto_reviewed` | The auto-reviewer judged an action (`metadata.decision`) |
 | `approval.policy.changed` | Approval mode, allow/block rules, or a space setting changed |
 | `credential.created`, `credential.changed`, `credential.deleted`, `credential.revealed` | Model, MCP, connector, voice, memory, vault and bot secrets |
+| `credential.used` | The vault gave a bot's run a saved login, card or API key, to type into a page or send to its site. Logged when the run gets the value, even if the fill or request then fails. Once per item each time a run starts or resumes; command variables aren't counted |
 | `space.created`, `space.renamed`, `space.deleted` | Spaces |
 | `auth.sign_in`, `auth.sign_out`, `auth.password.changed`, `auth.passkey.*`, `auth.session.revoked`, `device.*` | Account security, recorded in each organization the account belongs to |
 | `auth.account.deactivated`, `auth.account.reactivated` | The identity provider ([directory provisioning](./self-host-accounts.md#directory-provisioning-scim)) or the operator turned an account off or back on; the actor is the system, labelled `directory` or `operator` |

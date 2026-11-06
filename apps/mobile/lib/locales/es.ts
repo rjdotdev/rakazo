@@ -1,5 +1,15 @@
 export const ES_MESSAGES: Record<string, string> = {
   Haptics: "Respuesta háptica",
+  "Logins, cards and details your bots can use for you.":
+    "Inicios de sesión, tarjetas y datos que tus bots pueden usar por ti.",
+  "Add your first item": "Añade tu primer elemento",
+  "Bots type saved passwords and card numbers without seeing them.":
+    "Los bots escriben las contraseñas y los números de tarjeta guardados sin verlos.",
+  "Signs in only on its own site": "Inicia sesión solo en su propio sitio",
+  "Asks you before every payment": "Te pregunta antes de cada pago",
+  "Fills in a name, address or phone": "Rellena un nombre, una dirección o un teléfono",
+  "Lets a bot call a service": "Permite que un bot llame a un servicio",
+  "Set in the bot's commands": "Se define en los comandos del bot",
   "Add rule": "Añadir regla",
   "Tool name": "Nombre de la herramienta",
   Title: "Título",
@@ -29,7 +39,6 @@ export const ES_MESSAGES: Record<string, string> = {
   Logins: "Inicios de sesión",
   "Name on card": "Nombre en la tarjeta",
   "New item": "Nuevo elemento",
-  "Nothing saved yet.": "Aún no hay nada guardado.",
   Phone: "Teléfono",
   "Security code": "Código de seguridad",
   "State or region": "Estado o región",
@@ -1398,6 +1407,25 @@ export const ES_MESSAGES: Record<string, string> = {
   "Read from the page, not checked": "Leído de la página, sin verificar",
   Total: "Total",
   "{name} options": "Opciones de {name}",
+  "Used {when} by {bot}": "Usado {when} por {bot}",
+  Bots: "Bots",
+  "Saved, but this server can't block bots yet.":
+    "Guardado, pero este servidor aún no puede bloquear bots.",
+  "Chosen bots": "Bots elegidos",
+  "This item is blocked for bots. Allow it in the Vault, or dismiss the request.":
+    "Este elemento está bloqueado para los bots. Permítelo en la Bóveda o descarta la solicitud.",
+  "No bots": "Ningún bot",
+  "This limits only this Space's bots. Your other Spaces choose for their own.":
+    "Esto solo limita los bots de este espacio. Tus otros espacios eligen para los suyos.",
+  "This Space keeps its own vault, so its bots can't use account items.":
+    "Este espacio tiene su propia bóveda, así que sus bots no pueden usar los elementos de la cuenta.",
+  "Ask first": "Preguntar antes",
+  "Saved, but this server can't ask you first.":
+    "Guardado, pero este servidor no puede preguntarte antes.",
+  "Saved, but this server can't limit an item to chosen bots.":
+    "Guardado, pero este servidor no puede limitar un elemento a los bots elegidos.",
+  "This bot can't use this item. Change it in the Vault, or dismiss the request.":
+    "Este bot no puede usar este elemento. Cámbialo en la Bóveda o descarta la solicitud.",
 };
 
 export const PEER_MESSAGE_FORMS: Partial<Record<Intl.LDMLPluralRule, string>> = {

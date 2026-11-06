@@ -1,5 +1,15 @@
 export const JA_MESSAGES: Record<string, string> = {
   Haptics: "触覚フィードバック",
+  "Logins, cards and details your bots can use for you.":
+    "ボットがあなたの代わりに使えるログイン、カード、各種情報。",
+  "Add your first item": "最初の項目を追加",
+  "Bots type saved passwords and card numbers without seeing them.":
+    "ボットは保存されたパスワードやカード番号を見ずに入力します。",
+  "Signs in only on its own site": "自分のサイトでのみサインイン",
+  "Asks you before every payment": "支払いのたびに確認",
+  "Fills in a name, address or phone": "名前、住所、電話番号を入力",
+  "Lets a bot call a service": "ボットがサービスを呼び出せるようにする",
+  "Set in the bot's commands": "ボットのコマンドで設定",
   "Add rule": "ルールを追加",
   "Tool name": "ツール名",
   Address: "住所",
@@ -28,7 +38,6 @@ export const JA_MESSAGES: Record<string, string> = {
   Logins: "ログイン",
   "Name on card": "カード名義",
   "New item": "新しい項目",
-  "Nothing saved yet.": "まだ何も保存されていません。",
   Phone: "電話番号",
   "Security code": "セキュリティコード",
   "State or region": "都道府県・州",
@@ -1479,6 +1488,25 @@ export const JA_MESSAGES: Record<string, string> = {
   "Read from the page, not checked": "ページから読み取り、未確認",
   Total: "合計",
   "{name} options": "{name}のオプション",
+  "Used {when} by {bot}": "{when}に{bot}が使用",
+  Bots: "ボット",
+  "Saved, but this server can't block bots yet.":
+    "保存しましたが、このサーバーではまだボットをブロックできません。",
+  "Chosen bots": "選んだボット",
+  "This item is blocked for bots. Allow it in the Vault, or dismiss the request.":
+    "この項目はボットに対してブロックされています。保管庫で許可するか、リクエストを閉じてください。",
+  "No bots": "ボットなし",
+  "This limits only this Space's bots. Your other Spaces choose for their own.":
+    "これはこのスペースのボットだけを制限します。ほかのスペースはそれぞれのボットについて選びます。",
+  "This Space keeps its own vault, so its bots can't use account items.":
+    "このスペースは独自の保管庫を使うため、そのボットはアカウントの項目を使えません。",
+  "Ask first": "先に確認",
+  "Saved, but this server can't ask you first.":
+    "保存しましたが、このサーバーでは先に確認できません。",
+  "Saved, but this server can't limit an item to chosen bots.":
+    "保存しましたが、このサーバーでは項目を選んだボットだけに限定できません。",
+  "This bot can't use this item. Change it in the Vault, or dismiss the request.":
+    "このボットはこの項目を使えません。保管庫で変更するか、リクエストを閉じてください。",
 };
 
 export const PEER_MESSAGE_FORMS = { other: "{peer}とのメッセージ{count}件" };

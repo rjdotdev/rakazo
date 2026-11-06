@@ -1,7 +1,9 @@
 import {
+  BLOCKED_ITEM_ANSWER,
   CONNECTOR_AUTH_UNAVAILABLE,
   isVoiceAccountErrorCode,
   MCP_OAUTH_CLIENT_REQUIRED,
+  UNCHOSEN_ITEM_ANSWER,
 } from "@rakazo/contracts";
 import type { CredentialField } from "@rakazo/core";
 import {
@@ -126,4 +128,14 @@ export function computerBootErrorDetail(error: unknown): string | null {
     )
     ? null
     : detail;
+}
+
+// A secret answer's server error could echo the value, so only the known fixed one is shown.
+export function secretAnswerErrorText(error: unknown, fallback: string): string {
+  const message = error && typeof error === "object" && "message" in error ? error.message : "";
+  if (message === BLOCKED_ITEM_ANSWER)
+    return t("This item is blocked for bots. Allow it in the Vault, or dismiss the request.");
+  return message === UNCHOSEN_ITEM_ANSWER
+    ? t("This bot can't use this item. Change it in the Vault, or dismiss the request.")
+    : fallback;
 }

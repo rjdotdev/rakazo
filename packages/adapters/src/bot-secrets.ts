@@ -7,9 +7,11 @@ import type {
   LoginSecretValue,
   PurchaseCardField,
   SettingsScope,
+  VaultPolicy,
   VaultPreview,
 } from "@rakazo/contracts";
 import {
+  BLOCKED_ITEM_ANSWER,
   BotSecretAuth,
   BotSecretName,
   botSecretDestinationSchema,
@@ -36,9 +38,11 @@ import {
   OneTimeCodeTarget,
   SecretHttpRequest,
   sameLoginFieldLabel,
+  UNCHOSEN_ITEM_ANSWER,
 } from "@rakazo/contracts";
 import type { Prisma, PrismaClient } from "@rakazo/db";
 import {
+  currentDbContext,
   lockSpaceSettings,
   runCodeKind,
   runCodeSpentKind,
@@ -53,13 +57,20 @@ import type { RemoteTransportDependencies } from "./remote-mcp.js";
 import { createPrivateNetworkFetch, createSafeRemoteFetch } from "./remote-mcp.js";
 import { generateSecretValue } from "./secret-generator.js";
 import { persistPreparedSecret } from "./secret-persistence.js";
+import type { VaultLoginUse } from "./vault-card-use.js";
 import { readBodyCapped, withAbort } from "./web-ssrf.js";
 
 /**
  * The member a credential call acts for, in one Space. `vault` picks the account's vault or the
  * Space's own; omitted, it is whichever this Space uses, which is what bots read and write.
  */
-export type BotSecretScope = { userId: string; spaceId: string; vault?: SettingsScope };
+export type BotSecretScope = {
+  userId: string;
+  spaceId: string;
+  vault?: SettingsScope;
+  /** Set for a bot's run, which sees only the items it may use; the owner reads without one. */
+  botId?: string;
+};
 type VaultClient = Pick<PrismaClient, "spaceSettingOverride">;
 
 /**
@@ -88,6 +99,86 @@ async function assertVaultInUse(client: VaultClient, scope: BotSecretScope) {
 async function vaultFields(client: VaultClient, scope: BotSecretScope) {
   const target = await settingsTarget(client, scope, "credentials", scope.vault);
   return { userId: scope.userId, spaceId: target === "space" ? scope.spaceId : null };
+}
+
+// Blocked items, and ones chosen for other bots, are still redacted, through
+// loadLoginPasswordRedactions and loadCommandRedactions.
+async function usableVaultFields(client: VaultClient, scope: BotSecretScope) {
+  const vault = await vaultFields(client, scope);
+  if (!scope.botId) return vault;
+  // Row security shows a tenant only its own Space's limits, so a bot's read in another Space's
+  // tenant would miss them: it finds nothing instead.
+  const context = currentDbContext();
+  if (context?.kind === "tenant" && context.spaceId !== scope.spaceId)
+    return { ...vault, id: { in: [] } };
+  return {
+    ...vault,
+    policy: { not: "off" },
+    // Limited in this Space only to the bots chosen here; another Space's choice never applies.
+    OR: [
+      { limits: { none: { spaceId: scope.spaceId } } },
+      { bots: { some: { botId: scope.botId } } },
+    ],
+  };
+}
+
+// Says nothing of the item, as a name the bot can't use may be taken by one it can't see.
+export const HIDDEN_ITEM = "That name can't be used. Use another name.";
+
+/** Which of the owner's bots in this Space may use an item; each part left out stays as it is. */
+export type VaultItemBots = { allBots?: boolean; botIds?: string[] };
+export const UNKNOWN_BOTS = "Choose from your bots in this Space";
+
+/**
+ * Sets whether an item is limited in this Space and the bots chosen here, keeping every other
+ * Space's. Only the owner's bots in a Space that uses the item's vault.
+ */
+async function saveItemBots(
+  tx: Prisma.TransactionClient,
+  scope: BotSecretScope,
+  credentialId: string,
+  bots: VaultItemBots | undefined,
+) {
+  if (!bots || scope.botId) return;
+  const owner = { userId: scope.userId, spaceId: scope.spaceId };
+  if (bots.allBots) await tx.vaultCredentialLimit.deleteMany({ where: { ...owner, credentialId } });
+  else if (bots.allBots === false)
+    await tx.vaultCredentialLimit.createMany({
+      data: [{ ...owner, credentialId }],
+      skipDuplicates: true,
+    });
+  if (!bots.botIds) return;
+  const botIds = [...new Set(bots.botIds)];
+  if (botIds.length) {
+    const [here, item] = await Promise.all([vaultFields(tx, owner), vaultFields(tx, scope)]);
+    const found = await tx.bot.count({ where: { ...owner, id: { in: botIds } } });
+    if (here.spaceId !== item.spaceId || found !== botIds.length) throw new Error(UNKNOWN_BOTS);
+  }
+  await tx.vaultCredentialBot.deleteMany({
+    where: { ...owner, credentialId, botId: { notIn: botIds } },
+  });
+  await tx.vaultCredentialBot.createMany({
+    data: botIds.map((botId) => ({ ...owner, credentialId, botId })),
+    skipDuplicates: true,
+  });
+}
+
+// What the person answering for a bot is told of an item it can't use: Blocked, or limited to others.
+const hiddenAnswer = (policy: string | undefined) =>
+  policy === "off" ? BLOCKED_ITEM_ANSWER : UNCHOSEN_ITEM_ANSWER;
+
+// A blocked name stays taken, so a bot can't save another item over it.
+async function hiddenFromBot(
+  client: PrismaClient | Prisma.TransactionClient,
+  scope: BotSecretScope,
+  name: string,
+) {
+  if (!scope.botId) return false;
+  const [saved, usable] = await Promise.all([
+    client.vaultCredential.count({ where: { ...(await vaultFields(client, scope)), name } }),
+    client.vaultCredential.count({ where: { ...(await usableVaultFields(client, scope)), name } }),
+  ]);
+  return saved > usable;
 }
 
 const metadata = { name: true, origin: true, auth: true } as const;
@@ -207,7 +298,7 @@ export async function loadBotCommandEnvironment(
   unsetVariables?: Set<string>,
 ): Promise<Record<string, string>> {
   const rows = await prisma.vaultCredential.findMany({
-    where: await vaultFields(prisma, scope),
+    where: await usableVaultFields(prisma, scope),
     select: { id: true, name: true, auth: true, ciphertext: true },
     orderBy: { name: "asc" },
   });
@@ -248,9 +339,24 @@ export async function shellCommandEnvironment(input: {
     unsetVariables,
   );
   // Encoded forms too, as secret_request does, so an accidental `base64` or URL-encoding of a
-  // value is still redacted from command output.
-  input.registerRedactions(commandCredentialRedactions(botEnvironment));
+  // value is still redacted from command output. Both reads, as the vault may change between them.
+  input.registerRedactions([
+    ...commandCredentialRedactions(botEnvironment),
+    ...(input.scope.botId
+      ? await loadCommandRedactions(input.prisma, input.secretStore, input.scope)
+      : []),
+  ]);
   return { env: botEnvironment, unsetEnv: [...unsetVariables] };
+}
+
+// Also variables this bot may no longer use: an earlier run may have written one out.
+export async function loadCommandRedactions(
+  prisma: PrismaClient,
+  secretStore: Pick<SecretStore, "load">,
+  scope: BotSecretScope,
+): Promise<string[]> {
+  const { botId: _, ...owner } = scope;
+  return commandCredentialRedactions(await loadBotCommandEnvironment(prisma, secretStore, owner));
 }
 
 /** Another command credential of this bot that is exported as the same variable. */
@@ -265,9 +371,11 @@ export async function findCommandVariableConflict(
     where: { ...(await vaultFields(client, scope)), name: { not: destination.name } },
     select: { name: true, auth: true },
   });
-  return rows.find(
+  const name = rows.find(
     (row) => isCommandCredential(row.auth) && commandVariableName(row.name) === variable,
   )?.name;
+  // A bot is never told the name of an item it can't see.
+  return name && (await hiddenFromBot(client, scope, name)) ? "another saved item" : name;
 }
 
 /** The bot must tell the user why it falls back to a takeover, so the refusal says so. */
@@ -511,7 +619,9 @@ export async function findBotSecret(prisma: PrismaClient, scope: BotSecretScope,
     where: { ...(await vaultFields(prisma, scope)), name },
     select: { ...metadata, id: true },
   });
-  return row ? { id: row.id, destination: normalizeSecretDestination(row) } : null;
+  if (!row) return null;
+  if (await hiddenFromBot(prisma, scope, name)) return { hidden: true as const };
+  return { id: row.id, destination: normalizeSecretDestination(row) };
 }
 
 /**
@@ -521,7 +631,7 @@ export async function findBotSecret(prisma: PrismaClient, scope: BotSecretScope,
 export async function findSiteLogin(prisma: PrismaClient, scope: BotSecretScope, origin: string) {
   if (!origin.startsWith("https://")) return null;
   const rows = await prisma.vaultCredential.findMany({
-    where: { ...(await vaultFields(prisma, scope)), origin },
+    where: { ...(await usableVaultFields(prisma, scope)), origin },
     select: metadata,
   });
   // A row saved before today's name or site rules can't be filled, so it doesn't count.
@@ -569,11 +679,14 @@ export async function prepareBotSecret(input: {
   /** What people call the item and when to use it; left as they are when omitted. */
   title?: string;
   note?: string;
+  policy?: VaultPolicy;
+  bots?: VaultItemBots;
 }) {
   const { prisma, secretStore, scope } = input;
   let { plaintext } = input;
   if (!plaintext || plaintext.length > 16_384) throw new Error("Invalid credential length");
   const destination = normalizeSecretDestination(input.destination);
+  const policy = policyField(destination.auth, input.policy);
   if (
     destination.auth.type === "login" ||
     destination.auth.type === "card" ||
@@ -603,6 +716,9 @@ export async function prepareBotSecret(input: {
       throw new Error("Remove the existing credential before changing its destination");
     if (!row && count >= 100) throw new Error("Credential limit reached");
   }
+  // Before the destination checks, so the person answering is told the item is blocked.
+  if (existing && (await hiddenFromBot(prisma, scope, destination.name)))
+    throw new Error(hiddenAnswer(existing.policy));
   validate(existing, await prisma.vaultCredential.count({ where: vault }));
   const id = existing?.id ?? randomBytes(12).toString("hex");
   const stored = await secretStore.put(
@@ -622,9 +738,12 @@ export async function prepareBotSecret(input: {
     async store(tx: Prisma.TransactionClient) {
       await lockVault(tx, scope);
       await assertVaultInUse(tx, scope);
+      // First under the lock, so an item blocked while the request waited is never replaced.
       const current = await tx.vaultCredential.findFirst({
         where: { ...vault, name: destination.name },
       });
+      if (await hiddenFromBot(tx, scope, destination.name))
+        throw new Error(hiddenAnswer(current?.policy));
       if (JSON.stringify(await vaultFields(tx, scope)) !== JSON.stringify(vault)) {
         throw Object.assign(new Error("Vault changed while saving; retry"), { code: "P2034" });
       }
@@ -640,6 +759,7 @@ export async function prepareBotSecret(input: {
       const labelled = {
         ...(input.title !== undefined ? { title: input.title } : {}),
         ...(input.note !== undefined ? { note: input.note } : {}),
+        ...policy,
       };
       // The site and the value change together; validate allowed another site only when replacing.
       if (current)
@@ -651,6 +771,7 @@ export async function prepareBotSecret(input: {
         await tx.vaultCredential.create({
           data: { id, ...vault, ...destination, ...labelled, ciphertext: stored.ciphertext },
         });
+      await saveItemBots(tx, scope, id, input.bots);
     },
   };
 }
@@ -716,7 +837,9 @@ export async function generateBotSecret(input: {
   const command: BotSecretDestination | undefined = parsed.data.command
     ? { name: loginCommandName(name), origin: "", auth: { type: "command" } }
     : undefined;
-  const existing = (await findBotSecret(input.prisma, input.scope, name))?.destination;
+  const found = await findBotSecret(input.prisma, input.scope, name);
+  if (found && "hidden" in found) return { result: { error: HIDDEN_ITEM } };
+  const existing = found?.destination;
   if (existing) {
     return {
       result: sameSecretDestination(existing, destination)
@@ -730,10 +853,14 @@ export async function generateBotSecret(input: {
         : { error: "A credential with this name already exists. Use another name." },
     };
   }
-  if (command && (await findBotSecret(input.prisma, input.scope, command.name))) {
+  const commandFound = command && (await findBotSecret(input.prisma, input.scope, command.name));
+  if (commandFound) {
     return {
       result: {
-        error: `A credential named ${command.name} already exists. Use another name for the login.`,
+        error:
+          "hidden" in commandFound
+            ? HIDDEN_ITEM
+            : `A credential named ${command.name} already exists. Use another name for the login.`,
       },
     };
   }
@@ -783,7 +910,7 @@ export async function listBotSecrets(
   scope: BotSecretScope,
 ) {
   const rows = await prisma.vaultCredential.findMany({
-    where: await vaultFields(prisma, scope),
+    where: await usableVaultFields(prisma, scope),
     select: { ...metadata, ...labels, id: true, ciphertext: true },
     orderBy: { name: "asc" },
   });
@@ -876,16 +1003,35 @@ export async function listVaultItems(
   secretStore: Pick<SecretStore, "load">,
   scope: BotSecretScope,
   name?: string,
+  /** Off when only its metadata is needed: the preview decrypts the value. */
+  withPreview = true,
 ) {
   const rows = await prisma.vaultCredential.findMany({
-    where: { ...(await vaultFields(prisma, scope)), ...(name !== undefined ? { name } : {}) },
-    select: { ...ownerMetadata, id: true, ciphertext: true },
+    where: { ...(await usableVaultFields(prisma, scope)), ...(name !== undefined ? { name } : {}) },
+    select: { ...ownerMetadata, id: true, ciphertext: true, policy: true },
     orderBy: { name: "asc" },
   });
+  // Whether each is limited in this Space, and the bots chosen here.
+  const here = {
+    userId: scope.userId,
+    spaceId: scope.spaceId,
+    credentialId: { in: rows.map((row) => row.id) },
+  };
+  const [limited, chosen] = await Promise.all([
+    prisma.vaultCredentialLimit.findMany({ where: here, select: { credentialId: true } }),
+    prisma.vaultCredentialBot.findMany({
+      where: here,
+      select: { credentialId: true, botId: true },
+    }),
+  ]);
   return Promise.all(
     rows.map(async ({ id, ciphertext, ...row }) => {
-      const preview = await itemPreview(secretStore, { id, ciphertext, auth: row.auth });
-      return { ...row, title: vaultItemTitle(row, preview), preview };
+      const preview = withPreview
+        ? await itemPreview(secretStore, { id, ciphertext, auth: row.auth })
+        : undefined;
+      const botIds = chosen.flatMap((entry) => (entry.credentialId === id ? [entry.botId] : []));
+      const allBots = !limited.some((entry) => entry.credentialId === id);
+      return { ...row, allBots, botIds, title: vaultItemTitle(row, preview), preview };
     }),
   );
 }
@@ -922,12 +1068,23 @@ export async function newVaultItemName(
   }
 }
 
-/** Change only what people call an item and when to use it. */
+// A contact isn't secret, so bots always see it. Only a login can ask first.
+function policyField(auth: unknown, policy: VaultPolicy | undefined) {
+  if (!policy) return {};
+  const type = BotSecretAuth.safeParse(auth).data?.type;
+  if (type === "contact" || (policy === "ask" && type !== "login"))
+    throw new Error(UNSUPPORTED_ACCESS);
+  return { policy };
+}
+
+export const UNSUPPORTED_ACCESS = "This item can't be used that way";
+
+/** Change only what people call an item, when to use it, and when bots may use it. */
 export async function relabelVaultItem(
   prisma: PrismaClient,
   scope: BotSecretScope,
   name: string,
-  labels: { title?: string; note?: string },
+  labels: { title?: string; note?: string; policy?: VaultPolicy; bots?: VaultItemBots },
 ) {
   await assertVaultInUse(prisma, scope);
   // Only these columns: the rest of a request never reaches the row.
@@ -935,11 +1092,28 @@ export async function relabelVaultItem(
     ...(labels.title !== undefined ? { title: labels.title } : {}),
     ...(labels.note !== undefined ? { note: labels.note } : {}),
   };
-  const updated = await prisma.vaultCredential.updateMany({
-    where: { ...(await vaultFields(prisma, scope)), name },
-    data,
+  return prisma.$transaction(async (tx) => {
+    await lockVault(tx, scope);
+    const row = await tx.vaultCredential.findFirst({
+      where: { ...(await vaultFields(tx, scope)), name },
+      select: { id: true, auth: true },
+    });
+    if (!row) return false;
+    await tx.vaultCredential.update({
+      where: { id: row.id },
+      data: { ...data, ...policyField(row.auth, labels.policy) },
+    });
+    await saveItemBots(tx, scope, row.id, labels.bots);
+    return true;
   });
-  return updated.count > 0;
+}
+
+export async function vaultItemId(prisma: PrismaClient, scope: BotSecretScope, name: string) {
+  const row = await prisma.vaultCredential.findFirst({
+    where: { ...(await vaultFields(prisma, scope)), name },
+    select: { id: true },
+  });
+  return row?.id;
 }
 
 export async function getBotSecretMetadata(
@@ -975,12 +1149,19 @@ export async function revealBotSecret(input: {
 }
 
 export async function forgetBotSecret(prisma: PrismaClient, scope: BotSecretScope, name: string) {
-  await prisma.$transaction(async (tx) => {
+  return prisma.$transaction(async (tx) => {
     await lockVault(tx, scope);
-    await tx.vaultCredential.deleteMany({ where: { ...(await vaultFields(tx, scope)), name } });
+    // A bot can't remove an item it may not see, and is told what it would be of a missing one.
+    if (await hiddenFromBot(tx, scope, name)) return { removed: false };
+    const { count } = await tx.vaultCredential.deleteMany({
+      where: { ...(await vaultFields(tx, scope)), name },
+    });
+    return { removed: count > 0 };
   });
-  return { removed: true };
 }
+
+// For the audit log; never the value.
+export type VaultItemUse = { id: string; name: string; spaceId: string | null; kind: string };
 
 /** Credentials are resolved only inside this destination-bound HTTP boundary. */
 export async function requestWithBotSecret(input: {
@@ -991,10 +1172,11 @@ export async function requestWithBotSecret(input: {
   signal: AbortSignal;
   remote?: RemoteTransportDependencies;
   registerRedactions?: (values: string[]) => void;
+  recordUse?: (item: VaultItemUse, site: string) => Promise<void>;
 }): Promise<unknown> {
   const request = SecretHttpRequest.parse(input.request);
   const row = await input.prisma.vaultCredential.findFirst({
-    where: { ...(await vaultFields(input.prisma, input.scope)), name: request.name },
+    where: { ...(await usableVaultFields(input.prisma, input.scope)), name: request.name },
   });
   if (!row) return { error: "Credential is unavailable. Use request_secret to save it first." };
   const destination = normalizeSecretDestination(row);
@@ -1018,16 +1200,12 @@ export async function requestWithBotSecret(input: {
   });
   const headers = new Headers({ accept: "application/json", "content-type": request.contentType });
   const { name: headerName, value: headerValue } = credentialHeader(destination, plaintext);
-  const redactions = [
-    ...new Set([
-      plaintext,
-      headerValue,
-      Buffer.from(plaintext).toString("base64"),
-      encodeURIComponent(plaintext),
-      headerValue.replace(/^Basic /, ""),
-    ]),
-  ].filter(Boolean);
+  const redactions = apiKeyRedactionForms(destination, plaintext);
   input.registerRedactions?.(redactions);
+  await input.recordUse?.(
+    { id: row.id, name: row.name, spaceId: row.spaceId, kind: destination.auth.type },
+    destination.origin,
+  );
   // The safe fetch refuses plain-HTTP and private hosts outright. A credential
   // saved under the owner's private-HTTP opt-in was validated against exactly
   // those rules at save time, and the request URL is pinned to its origin, so
@@ -1090,6 +1268,19 @@ function passwordRedactionForms(password: string): string[] {
   ];
 }
 
+function apiKeyRedactionForms(destination: BotSecretDestination, plaintext: string): string[] {
+  const { value: headerValue } = credentialHeader(destination, plaintext);
+  return [
+    ...new Set([
+      plaintext,
+      headerValue,
+      Buffer.from(plaintext).toString("base64"),
+      encodeURIComponent(plaintext),
+      headerValue.replace(/^Basic /, ""),
+    ]),
+  ].filter(Boolean);
+}
+
 /** A card number as pages show it: as given, digits only, and in groups of four. */
 export function cardRedactionForms(number: string): string[] {
   const digits = number.replace(/\D/g, "");
@@ -1099,27 +1290,26 @@ export function cardRedactionForms(number: string): string[] {
 }
 
 /**
- * Redaction forms of the hidden fields of every website login saved for this bot, and of every
- * saved card's number. A filled login or card stays on its page after the run that filled it, so
- * each run hides them before any tool output reaches the model. Visible fields stay readable
- * outside the filling run: one is often the user's own email, which ordinary tasks need. Only
- * login and card rows are decrypted.
+ * Redaction forms of every saved login's hidden fields, card number and API key in the vault the
+ * run uses. A filled login or card stays on its page after the run that filled it, so each run
+ * hides them before any tool output reaches the model. Visible fields stay readable outside the
+ * filling run: one is often the user's own email, which ordinary tasks need.
  */
 export async function loadLoginPasswordRedactions(
   prisma: PrismaClient,
   secretStore: Pick<SecretStore, "load">,
   scope: BotSecretScope,
 ): Promise<string[]> {
-  // Every saved login and card, however many other credentials the bot has; only they are read.
+  // Every saved login, card and API key, whether or not this bot may use it: a value an earlier
+  // run wrote down stays hidden. Command variables and contacts are not read here.
   const rows = await prisma.vaultCredential.findMany({
     where: {
       ...(await vaultFields(prisma, scope)),
-      OR: [
-        { auth: { path: ["type"], equals: "login" } },
-        { auth: { path: ["type"], equals: "card" } },
-      ],
+      OR: ["login", "card", "bearer", "header", "basic"].map((type) => ({
+        auth: { path: ["type"], equals: type },
+      })),
     },
-    select: { id: true, auth: true, ciphertext: true },
+    select: { id: true, name: true, origin: true, auth: true, ciphertext: true },
   });
   const forms = new Set<string>();
   for (const row of rows) {
@@ -1130,6 +1320,18 @@ export async function loadLoginPasswordRedactions(
         for (const form of cardRedactionForms(card.number)) forms.add(form);
       } catch {
         getLogger().warn("saved card could not be loaded for redaction", { cardId: row.id });
+      }
+      continue;
+    }
+    if (type === "bearer" || type === "header" || type === "basic") {
+      try {
+        const plaintext = await secretStore.load(row.ciphertext, row.id);
+        // A short value would mangle unrelated text in every run; the run that sends it hides it.
+        if (plaintext.length < MIN_REDACTED_HIDDEN_VALUE_EVERY_RUN) continue;
+        const auth = BotSecretAuth.parse(row.auth);
+        for (const form of apiKeyRedactionForms({ ...row, auth }, plaintext)) forms.add(form);
+      } catch {
+        getLogger().warn("saved API key could not be loaded for redaction", { keyId: row.id });
       }
       continue;
     }
@@ -1291,8 +1493,11 @@ export async function resolveLoginFill(input: {
   runId: string;
   name: string;
   field: string;
+  /** The user's approval of this call, which a login that asks first needs. */
+  approval?: VaultLoginUse;
 }): Promise<
-  { text: string; hidden: boolean; origin: string; redactions: string[] } | { error: string }
+  | { text: string; hidden: boolean; origin: string; redactions: string[]; used?: VaultItemUse }
+  | { error: string }
 > {
   const runLogin = await findRunLogin(
     input.prisma,
@@ -1304,7 +1509,7 @@ export async function resolveLoginFill(input: {
   const row = runLogin
     ? undefined
     : await input.prisma.vaultCredential.findFirst({
-        where: { ...(await vaultFields(input.prisma, input.scope)), name: input.name },
+        where: { ...(await usableVaultFields(input.prisma, input.scope)), name: input.name },
       });
   const stored = runLogin
     ? { name: input.name, origin: runLogin.origin, auth: { type: "login" } }
@@ -1338,6 +1543,21 @@ export async function resolveLoginFill(input: {
     return { error: "This credential is not a website login." };
   }
   if (destination.origin !== storedOrigin.origin) return { error: HTTPS_ONLY };
+  // Read again here, so the login as it is now is the one the user approved, on its site.
+  const { approval } = input;
+  if (row?.policy === "ask") {
+    if (
+      approval?.login !== row.name ||
+      approval.site !== destination.origin ||
+      !approval.fields.includes(input.field.trim())
+    )
+      return { error: "The user has not approved signing in with this login here." };
+    if (approval.savedAt !== row.updatedAt.toISOString())
+      return {
+        error:
+          "This login changed after the user approved it, so nothing was typed. Call browser_act again to ask them.",
+      };
+  }
   const { fields } =
     runLogin ?? decodeLoginSecret(await input.secretStore.load(row!.ciphertext, row!.id));
   const field = findLoginField(fields, input.field);
@@ -1351,6 +1571,8 @@ export async function resolveLoginFill(input: {
     hidden: field.hidden,
     origin: destination.origin,
     redactions: loginFillRedactions(fields),
+    // Only a saved login is a vault item; this run's own login was never saved.
+    ...(row && { used: { id: row.id, name: row.name, spaceId: row.spaceId, kind: "login" } }),
   };
 }
 
@@ -1448,12 +1670,14 @@ export async function resolveVaultCardFill(input: {
   site: string;
   /** When the approved card was last saved; a card replaced since then is not typed. */
   savedAt: string;
-}): Promise<{ text: string; origin: string; redactions: string[] } | { error: string }> {
+}): Promise<
+  { text: string; origin: string; redactions: string[]; used: VaultItemUse } | { error: string }
+> {
   const target = OneTimeCodeTarget.safeParse({ origin: input.site });
   if (!target.success) return { error: "site must be the checkout page's HTTPS origin." };
-  const vault = await vaultFields(input.prisma, input.scope);
+  const usable = await usableVaultFields(input.prisma, input.scope);
   const row = await input.prisma.vaultCredential.findFirst({
-    where: { ...vault, name: input.name },
+    where: { ...usable, name: input.name },
   });
   if (!row || BotSecretAuth.safeParse(row.auth).data?.type !== "card") {
     return { error: "No card is saved under this name. Check list_secrets." };
@@ -1465,26 +1689,32 @@ export async function resolveVaultCardFill(input: {
     };
   }
   const card = decodeCardSecret(await input.secretStore.load(row.ciphertext, row.id));
-  const origin = new URL(target.data.origin).origin;
-  const redactions = cardRedactionForms(card.number);
-  if (input.field === "number") return { text: card.number, origin, redactions };
-  if (input.field === "expiry") return { text: cardExpiry(card), origin, redactions };
+  const fill = {
+    origin: new URL(target.data.origin).origin,
+    redactions: cardRedactionForms(card.number),
+    used: { id: row.id, name: row.name, spaceId: row.spaceId, kind: "card" },
+  };
+  if (input.field === "number") return { text: card.number, ...fill };
+  if (input.field === "expiry") return { text: cardExpiry(card), ...fill };
   if (input.field === "cvc") {
     // Only the number is hidden, as for a wallet card: hiding 3 or 4 digits would blank every total
     // and order number that contains them for the rest of the run.
     return card.cvc
-      ? { text: card.cvc, origin, redactions }
+      ? { text: card.cvc, ...fill }
       : { error: "This card has no security code saved." };
   }
   const billing = card.billing
-    ? await input.prisma.vaultCredential.findFirst({ where: { ...vault, name: card.billing } })
+    ? await input.prisma.vaultCredential.findFirst({ where: { ...usable, name: card.billing } })
     : null;
   const postalCode =
     billing && BotSecretAuth.safeParse(billing.auth).data?.type === "contact"
       ? decodeContactSecret(await input.secretStore.load(billing.ciphertext, billing.id)).postalCode
       : undefined;
+  // A billing contact the bot can't use, or one removed, is withheld, not left for it to guess.
+  if (card.billing && !billing)
+    return { error: "This card has no billing address this bot can use." };
   return postalCode
-    ? { text: postalCode, origin, redactions }
+    ? { text: postalCode, ...fill }
     : {
         error:
           "This card has no billing postal code saved. Type the postal code of the user's billing address yourself.",

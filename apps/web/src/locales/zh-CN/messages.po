@@ -680,6 +680,10 @@ msgstr "添加触发器"
 msgid "Add workspace"
 msgstr "添加工作区"
 
+#: src/components/VaultSettings.tsx
+msgid "Add your first item"
+msgstr "添加第一项"
+
 #: src/components/integrations/plugin-marketplace.tsx
 #: src/pages/PluginsOverlay.tsx
 msgid "Added"
@@ -750,6 +754,7 @@ msgid "All time"
 msgstr "全部时间"
 
 #: src/components/ApprovalRulesSettings.tsx
+#: src/components/vault/VaultItemAccess.tsx
 msgid "Allow"
 msgstr "允许"
 
@@ -982,6 +987,14 @@ msgstr "产物"
 msgid "Ask"
 msgstr "询问"
 
+#: src/components/vault/VaultItemAccess.tsx
+msgid "Ask first"
+msgstr "先询问"
+
+#: src/components/VaultSettings.tsx
+msgid "Asks you before every payment"
+msgstr "每次付款前都会询问你"
+
 #: src/pages/shell/computer-panel.tsx
 msgid "Asleep"
 msgstr "休眠中"
@@ -1127,6 +1140,7 @@ msgid "Billing period"
 msgstr "账单周期"
 
 #: src/components/ApprovalRulesSettings.tsx
+#: src/components/vault/VaultItemAccess.tsx
 msgid "Block"
 msgstr "阻止"
 
@@ -1195,9 +1209,18 @@ msgstr "Bot 的模型"
 msgid "Both"
 msgstr "两者"
 
+#: src/components/vault/VaultItemAccess.tsx
+#: src/components/vault/VaultItemDetail.tsx
+msgid "Bots"
+msgstr "机器人"
+
 #: src/components/ModelCredits.tsx
 msgid "Bots and browser automation"
 msgstr "Bot 和浏览器自动化"
+
+#: src/components/VaultSettings.tsx
+msgid "Bots type saved passwords and card numbers without seeing them."
+msgstr "机器人会输入已保存的密码和卡号，但看不到它们。"
 
 #: src/components/SharedSpaceRules.tsx
 msgid "Bots use the accounts of whoever messages them"
@@ -3323,6 +3346,10 @@ msgstr "文件或文件夹，每行一个"
 msgid "Files your bots create, like reports, docs and images, collect here."
 msgstr "你的机器人创建的文件，例如报告、文档和图片，都会汇集在这里。"
 
+#: src/components/VaultSettings.tsx
+msgid "Fills in a name, address or phone"
+msgstr "填写姓名、地址或电话"
+
 #: src/pages/GroupPanel.tsx
 msgid "Filter bots"
 msgstr "筛选 Bot"
@@ -3902,6 +3929,10 @@ msgstr "退出空间"
 msgid "Let bots use this computer"
 msgstr "允许 Bot 使用这台电脑"
 
+#: src/components/VaultSettings.tsx
+msgid "Lets a bot call a service"
+msgstr "让机器人调用某个服务"
+
 #: src/pages/MemorySettingsOverlay.tsx
 msgid "Lets bots save and recall facts by meaning, alongside MEMORY.md."
 msgstr "让机器人在 MEMORY.md 之外，按语义保存和回忆事实。"
@@ -4020,6 +4051,10 @@ msgstr ""
 #: src/components/vault/kinds.tsx
 msgid "Logins"
 msgstr ""
+
+#: src/components/VaultSettings.tsx
+msgid "Logins, cards and details your bots can use for you."
+msgstr "机器人可以代你使用的登录信息、卡片和资料。"
 
 #: src/pages/shell/agent-import.tsx
 msgid "Looks like it contains a key"
@@ -4584,6 +4619,7 @@ msgid "No authentication"
 msgstr "无认证"
 
 #: src/components/integrations/agent-access.tsx
+#: src/components/vault/VaultItemDetail.tsx
 msgid "No bots"
 msgstr "没有机器人"
 
@@ -5857,6 +5893,18 @@ msgstr "已保存"
 msgid "Saved, but list refresh failed"
 msgstr "已保存，但列表刷新失败"
 
+#: src/components/VaultSettings.tsx
+msgid "Saved, but this server can't ask you first."
+msgstr "已保存，但此服务器无法先询问你。"
+
+#: src/components/VaultSettings.tsx
+msgid "Saved, but this server can't block bots yet."
+msgstr "已保存，但此服务器暂时无法阻止机器人。"
+
+#: src/components/VaultSettings.tsx
+msgid "Saved, but this server can't limit an item to chosen bots."
+msgstr "已保存，但此服务器无法将项目限制为所选机器人。"
+
 #: src/pages/model-settings/use-model-settings.ts
 msgid "Saved."
 msgstr "已保存。"
@@ -6075,6 +6123,10 @@ msgstr "服务器 URL"
 msgid "Set"
 msgstr "设置"
 
+#: src/components/VaultSettings.tsx
+msgid "Set in the bot's commands"
+msgstr "在机器人的命令中设置"
+
 #: src/components/call/CallCard.tsx
 #: src/components/SidebarFooter.tsx
 #: src/pages/MessagingSettingsPanel.tsx
@@ -6234,6 +6286,10 @@ msgstr "注册"
 #: src/components/integrations/plugin-marketplace.tsx
 msgid "Sign-in cancelled. Try again."
 msgstr "登录已取消。请重试。"
+
+#: src/components/VaultSettings.tsx
+msgid "Signs in only on its own site"
+msgstr "只在对应网站登录"
 
 #: src/components/vault/VaultItemDetail.tsx
 #: src/components/vault/VaultItemEditor.tsx
@@ -6729,6 +6785,10 @@ msgstr "无法读取此备份。"
 msgid "This bot"
 msgstr "此 Bot"
 
+#: src/lib/user-error.ts
+msgid "This bot can't use this item. Change it in the Vault, or dismiss the request."
+msgstr "此机器人无法使用此项目。请在保管库中更改，或关闭此请求。"
+
 #: src/pages/shell/computer-view.tsx
 msgid "This bot runs on this computer, not a Linux desktop. Shell and files use your home folder."
 msgstr "此 Bot 运行在这台电脑上，而不是 Linux 桌面。Shell 和文件使用你的主目录。"
@@ -6787,6 +6847,14 @@ msgstr "此导入已使用过。请重新选择文件。"
 #: src/pages/Invite.tsx
 msgid "This invite link is no longer valid."
 msgstr ""
+
+#: src/lib/user-error.ts
+msgid "This item is blocked for bots. Allow it in the Vault, or dismiss the request."
+msgstr "此项目已阻止机器人使用。请在保管库中允许，或关闭此请求。"
+
+#: src/components/VaultSettings.tsx
+msgid "This limits only this Space's bots. Your other Spaces choose for their own."
+msgstr "这只限制此工作区的机器人。你的其他工作区会为各自的机器人选择。"
 
 #: src/pages/HostComputerPrompt.tsx
 msgid "this Mac"
@@ -6865,6 +6933,10 @@ msgstr "此服务器已连接。请先断开再重新授权。"
 #: src/lib/run-error.ts
 msgid "This server's tool result does not fit the model. Turn off Keep tool results whole for that server, or choose another model."
 msgstr "此服务器的工具结果超出模型容量。请关闭该服务器的“保留完整工具结果”，或选择其他模型。"
+
+#: src/components/VaultSettings.tsx
+msgid "This Space keeps its own vault, so its bots can't use account items."
+msgstr "此工作区使用自己的保管库，因此其中的机器人无法使用账户项目。"
 
 #: src/pages/model-settings/connection-controls.tsx
 msgid "This subscription sign-in is not available in Rakazo yet. Use a deployment credential or choose another provider."
@@ -7202,6 +7274,10 @@ msgstr "使用工作区默认"
 #: src/pages/memory-providers/HonchoSettingsForm.tsx
 msgid "Use up to 512 letters, digits, _ or -."
 msgstr "最多 512 个字母、数字、_ 或 -。"
+
+#: src/components/vault/VaultItemActivity.tsx
+msgid "Used {when} by {bot}"
+msgstr "{bot} 于{when}使用"
 
 #: src/pages/memory-providers/HonchoSettingsForm.tsx
 msgid "User peer"

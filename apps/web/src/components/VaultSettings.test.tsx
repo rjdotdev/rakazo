@@ -14,9 +14,15 @@ const vault = vi.hoisted(() => ({
   put: vi.fn(),
   remove: vi.fn(),
   reveal: vi.fn(),
+  activity: vi.fn(),
 }));
 // No bot has an email address unless a test gives it one.
-const bots = vi.hoisted(() => ({ emailAddresses: vi.fn(async (): Promise<unknown> => null) }));
+const bots = vi.hoisted(() => ({
+  emailAddresses: vi.fn(async (): Promise<unknown> => null),
+  list: vi.fn(),
+}));
+const spaces = vi.hoisted(() => ({ list: vi.fn() }));
+const spaceSettings = vi.hoisted(() => ({ overrides: vi.fn() }));
 
 // The dialog itself is tested on its own; here it is a pair of buttons that settle it.
 vi.mock("./ConfirmIdentityDialog", async () => {
@@ -47,9 +53,9 @@ vi.mock("./ConfirmIdentityDialog", async () => {
 });
 
 vi.mock("../lib/rpc", () => ({
-  rpc: { vault, bots },
-  rpcForSpace: () => ({ vault, bots }),
-  createSpaceRpc: () => ({ vault, bots }),
+  rpc: { vault, bots, spaces, spaceSettings },
+  rpcForSpace: () => ({ vault, bots, spaces, spaceSettings }),
+  createSpaceRpc: () => ({ vault, bots, spaces, spaceSettings }),
   selectedSpaceId: () => null,
 }));
 vi.mock("@lingui/react/macro", () => {
@@ -194,6 +200,13 @@ beforeEach(() => {
   vault.put.mockReset().mockResolvedValue(rows[0]);
   vault.remove.mockReset().mockResolvedValue({ ok: true });
   vault.reveal.mockReset();
+  vault.activity.mockReset().mockResolvedValue([]);
+  spaces.list.mockReset().mockResolvedValue({ spaces: [{ id: "space-1", name: "Home" }] });
+  spaceSettings.overrides.mockReset().mockResolvedValue([]);
+  bots.list.mockReset().mockResolvedValue([
+    { id: "bot-1", name: "Ada", color: "#F97316" },
+    { id: "bot-2", name: "Grace", color: "#6366F1" },
+  ]);
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -206,6 +219,355 @@ afterEach(async () => {
   container.remove();
   vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+describe("an item's uses", () => {
+  it("shows the latest use only once there is one, and opens the list", async () => {
+    const at = new Date(Date.now() - 2 * 3600_000).toISOString();
+    const use = { at, botName: "Research bot", chat: null };
+    vault.activity.mockImplementation(async ({ name }: { name: string }) =>
+      name === "github"
+        ? [
+            { ...use, site: "https://github.com" },
+            { ...use, botName: "Helper", site: null },
+          ]
+        : [],
+    );
+    await render();
+    await click(rowNamed("visa"));
+    expect(find("vault-item-activity")).toBeNull();
+    await click("vault-back");
+    await click(rowNamed("github"));
+    expect(vault.activity).toHaveBeenLastCalledWith(
+      { scope: "account", name: "github" },
+      expect.anything(),
+    );
+    expect(byTestId("vault-item-activity").textContent).toBe("Used 2h ago by Research bot");
+    await click(byTestId("vault-item-activity").querySelector("button")!);
+    expect(
+      [...document.querySelectorAll('[data-testid="vault-item-use"]')].map(
+        (row) => row.textContent,
+      ),
+    ).toEqual(["Research botgithub.com2h ago", "Helper2h ago"]);
+  });
+
+  it("doesn't show a removed item's uses on a new item saved under its name", async () => {
+    const use = { at: new Date().toISOString(), botName: "Research bot", chat: null, site: null };
+    // As in the app, a read stays fresh for 30 seconds.
+    queryClient.setDefaultOptions({ queries: { retry: false, staleTime: 30_000 } });
+    vault.activity.mockResolvedValueOnce([use]).mockResolvedValue([]);
+    await render();
+    await click(rowNamed("deploy-token"));
+    expect(byTestId("vault-item-activity").textContent).toContain("Research bot");
+    await click("vault-item-remove");
+    await click("vault-item-remove-confirm");
+    await startNew("variable");
+    await type(field("Variable name"), "DEPLOY_TOKEN");
+    await type(field("Value"), FAKE_VALUE);
+    await click(buttonIn(editor(), "Save")!);
+    await click(rowNamed("deploy-token"));
+    expect(detail()).not.toBeNull();
+    expect(find("vault-item-activity")).toBeNull();
+  });
+});
+
+describe("an item bots may not use", () => {
+  it("shows Block on the item, and saves a change with the item only when it changed", async () => {
+    vi.stubGlobal("matchMedia", () => ({
+      matches: false,
+      addEventListener() {},
+      removeEventListener() {},
+    }));
+    const custom = { ...rows[3]!, policy: "off" } as const;
+    vault.list.mockResolvedValue([...rows.slice(0, 3), custom, rows[4]]);
+    vault.put.mockResolvedValue(custom);
+    await render();
+    await click(rowNamed("custom"));
+    expect(byTestId("vault-item-access-detail").textContent).toBe("BotsBlock");
+    await click("vault-item-edit");
+    const access = byTestId("vault-item-access");
+    expect(
+      [...access.querySelectorAll("button[aria-pressed]")].map((b) => [
+        b.textContent,
+        b.getAttribute("aria-pressed"),
+      ]),
+    ).toEqual([
+      ["Allow", "false"],
+      ["Block", "true"],
+    ]);
+    await click("vault-editor-save");
+    expect(vault.put.mock.lastCall?.[0]).not.toHaveProperty("policy");
+    // Saving returns to the item.
+    await click("vault-item-edit");
+    await click(buttonIn(byTestId("vault-item-access"), "Allow")!);
+    await click("vault-editor-save");
+    expect(vault.put.mock.lastCall?.[0]).toMatchObject({
+      destination: { name: "custom" },
+      policy: "allow",
+    });
+    // A contact isn't secret, so it has no choice.
+    await click("vault-back");
+    await click(rowNamed("home"));
+    await click("vault-item-edit");
+    expect(find("vault-item-access")).toBeNull();
+  });
+});
+
+describe("an item for chosen bots", () => {
+  const menuItem = (name: string) =>
+    [...document.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]')].find(
+      (item) => item.textContent === name,
+    );
+  async function openPicker() {
+    const trigger = [...byTestId("vault-item-access").querySelectorAll("button")].find(
+      (button) => !button.hasAttribute("aria-pressed"),
+    )!;
+    await click(trigger);
+  }
+
+  it("names the chosen bots, and keeps one it doesn't show when another is added", async () => {
+    vi.stubGlobal("matchMedia", () => ({
+      matches: false,
+      addEventListener() {},
+      removeEventListener() {},
+    }));
+    const custom = { ...rows[3]!, allBots: false, botIds: ["bot-archived", "bot-1"] };
+    vault.list.mockResolvedValue([...rows.slice(0, 3), custom, rows[4]]);
+    vault.put.mockResolvedValue(custom);
+    await render();
+    await click(rowNamed("custom"));
+    await vi.waitFor(() =>
+      expect(byTestId("vault-item-access-detail").textContent).toBe("BotsAda"),
+    );
+    await click("vault-item-edit");
+    await openPicker();
+    await act(async () => menuItem("Grace")!.click());
+    await click("vault-editor-save");
+    expect(vault.put.mock.lastCall?.[0]).toMatchObject({ allBots: false });
+    expect(vault.put.mock.lastCall?.[0].botIds.sort()).toEqual(["bot-1", "bot-2", "bot-archived"]);
+    // Saving without a change sends neither, so an older choice is never overwritten.
+    await click("vault-item-edit");
+    await click("vault-editor-save");
+    expect(vault.put.mock.lastCall?.[0]).not.toHaveProperty("allBots");
+    expect(vault.put.mock.lastCall?.[0]).not.toHaveProperty("botIds");
+  });
+
+  it("says an account item's other Spaces choose their own bots, and offers none from a Space with its own vault", async () => {
+    vi.stubGlobal("matchMedia", () => ({
+      matches: false,
+      addEventListener() {},
+      removeEventListener() {},
+    }));
+    const otherSpaces =
+      "This limits only this Space's bots. Your other Spaces choose for their own.";
+    const custom = { ...rows[3]!, allBots: false, botIds: ["bot-1"] };
+    vault.list.mockResolvedValue([...rows.slice(0, 3), custom, rows[4]]);
+    spaces.list.mockResolvedValue({
+      spaces: [
+        { id: "space-1", name: "Home" },
+        { id: "space-2", name: "Work" },
+      ],
+    });
+    await render();
+    await click(rowNamed("custom"));
+    await click("vault-item-edit");
+    await vi.waitFor(() =>
+      expect(byTestId("vault-item-access").textContent).toContain(otherSpaces),
+    );
+    await click(buttonIn(byTestId("vault-item-access"), "Block")!);
+    expect(byTestId("vault-item-access").textContent).not.toContain(otherSpaces);
+    // Seen from a Space with its own vault, the account item says why no bots can be chosen.
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    spaceSettings.overrides.mockResolvedValue(["credentials"]);
+    await render();
+    await click(rowNamed("custom"));
+    await click("vault-item-edit");
+    await vi.waitFor(() =>
+      expect(byTestId("vault-item-access").textContent).toContain(
+        "This Space keeps its own vault, so its bots can't use account items.",
+      ),
+    );
+    expect(find("agent-access")).toBeNull();
+    await click("vault-editor-save");
+    expect(vault.put.mock.lastCall?.[0]).not.toHaveProperty("botIds");
+  });
+
+  it("keeps the choice open with one bot: none, that bot, and every bot again", async () => {
+    vi.stubGlobal("matchMedia", () => ({
+      matches: false,
+      addEventListener() {},
+      removeEventListener() {},
+    }));
+    bots.list.mockResolvedValue([{ id: "bot-1", name: "Ada", color: "#F97316" }]);
+    const home = { ...rows[2]!, allBots: true, botIds: [] };
+    vault.list.mockResolvedValue([home]);
+    vault.put.mockResolvedValue(home);
+    await render();
+    await click(rowNamed("home"));
+    await click("vault-item-edit");
+    await openPicker();
+    await act(async () => menuItem("All bots")!.click());
+    // The list after saving holds the sole bot chosen, as a later edit would.
+    vault.list.mockResolvedValue([{ ...home, allBots: false, botIds: ["bot-1"] }]);
+    await click("vault-editor-save");
+    expect(vault.put.mock.lastCall?.[0]).toMatchObject({ allBots: false, botIds: [] });
+    // Chosen, the sole bot can be let go of for every bot again.
+    await click("vault-item-edit");
+    await openPicker();
+    await act(async () => menuItem("All bots")!.click());
+    await click("vault-editor-save");
+    expect(vault.put.mock.lastCall?.[0]).toMatchObject({ allBots: true });
+  });
+
+  it("limits a contact to no bots, and says when the server saved it for every bot", async () => {
+    vi.stubGlobal("matchMedia", () => ({
+      matches: false,
+      addEventListener() {},
+      removeEventListener() {},
+    }));
+    vault.list.mockResolvedValue(rows.map((row) => ({ ...row, allBots: true, botIds: [] })));
+    // An older server saves the item and drops the bots chosen for it.
+    vault.put.mockResolvedValue(rows[2]);
+    await render();
+    await startNew("contact");
+    await type(field("Label"), "Office");
+    await type(field("Address"), "1 Main St");
+    await openPicker();
+    await act(async () => menuItem("All bots")!.click());
+    await click("vault-editor-save");
+    expect(vault.put.mock.lastCall?.[0]).toMatchObject({ allBots: false, botIds: [] });
+    expect(detail()?.textContent).toContain(
+      "Saved, but this server can't limit an item to chosen bots.",
+    );
+  });
+
+  it("offers no choice of bots once the saved items show the server can't keep one", async () => {
+    await render();
+    await startNew("contact");
+    expect(find("vault-item-access")).toBeNull();
+    expect(bots.list).not.toHaveBeenCalled();
+  });
+});
+
+describe("a login that asks first", () => {
+  const pressed = () =>
+    [...byTestId("vault-item-access").querySelectorAll("button[aria-pressed]")].map((b) => [
+      b.textContent,
+      b.getAttribute("aria-pressed"),
+    ]);
+
+  it("offers Ask first for a login only, and says when the server didn't keep it", async () => {
+    vi.stubGlobal("matchMedia", () => ({
+      matches: false,
+      addEventListener() {},
+      removeEventListener() {},
+    }));
+    const asking = { ...rows[0]!, policy: "ask", allBots: true, botIds: [] } as const;
+    vault.list.mockResolvedValue([
+      asking,
+      ...rows.slice(1).map((row) => ({ ...row, allBots: true })),
+    ]);
+    vault.put.mockResolvedValue(asking);
+    vault.reveal.mockResolvedValue({
+      fields: [{ label: "Email", value: "octo@example.com", hidden: false }],
+    });
+    await render();
+    expect(vault.list.mock.lastCall?.[0]).toMatchObject({ askFirst: true });
+    await click(rowNamed("github"));
+    expect(byTestId("vault-item-access-detail").textContent).toBe("BotsAsk first");
+    await click("vault-item-edit");
+    expect(pressed()).toEqual([
+      ["Allow", "false"],
+      ["Ask first", "true"],
+      ["Block", "false"],
+    ]);
+    await click(buttonIn(byTestId("vault-item-access"), "Allow")!);
+    await click("vault-editor-save");
+    expect(vault.put.mock.lastCall?.[0]).toMatchObject({ policy: "allow", askFirst: true });
+    // An API key can't ask first.
+    await click("vault-back");
+    await click(rowNamed("custom"));
+    await click("vault-item-edit");
+    expect(pressed().map(([label]) => label)).toEqual(["Allow", "Block"]);
+    // A server from before Ask first refuses it, as its schema does: the item is saved without it,
+    // and opens saying so.
+    await click("vault-back");
+    await click("vault-back");
+    vault.put.mockImplementation(async (input: { policy?: string }) => {
+      if (input.policy === "ask")
+        throw Object.assign(new Error("Input validation failed"), { code: "BAD_REQUEST" });
+      return { ...rows[0]!, policy: "allow" };
+    });
+    await startNew("login");
+    await type(field("Site"), "https://github.com");
+    for (const input of editor()!.querySelectorAll<HTMLInputElement>(
+      '[data-testid="login-field"] input:not([aria-label="Label"])',
+    ))
+      await type(input, FAKE_VALUE);
+    await click(buttonIn(byTestId("vault-item-access"), "Ask first")!);
+    await click("vault-editor-save");
+    expect(vault.put.mock.calls.slice(-2).map(([input]) => input.policy)).toEqual([
+      "ask",
+      undefined,
+    ]);
+    expect(detail()?.textContent).toContain("Saved, but this server can't ask you first.");
+  });
+
+  it("shows both Ask first and the bots it is limited to", async () => {
+    vault.list.mockResolvedValue([
+      { ...rows[0]!, policy: "ask", allBots: false, botIds: ["bot-1"] },
+    ]);
+    await render();
+    await click(rowNamed("github"));
+    await vi.waitFor(() =>
+      expect(byTestId("vault-item-access-detail").textContent).toBe("BotsAsk first · Ada"),
+    );
+  });
+
+  it("never says No bots while the bots are still loading", async () => {
+    let loaded!: (list: unknown[]) => void;
+    bots.list.mockReturnValue(new Promise((resolve) => (loaded = resolve)));
+    vault.list.mockResolvedValue([{ ...rows[0]!, allBots: false, botIds: ["bot-1"] }]);
+    await render();
+    await click(rowNamed("github"));
+    expect(find("vault-item-access-detail")).toBeNull();
+    await act(async () => loaded([{ id: "bot-1", name: "Ada", color: "#F97316" }]));
+    await vi.waitFor(() =>
+      expect(byTestId("vault-item-access-detail").textContent).toBe("BotsAda"),
+    );
+  });
+
+  it("offers Ask first for the first login of an empty vault", async () => {
+    vault.list.mockResolvedValue([]);
+    await render();
+    await startNew("login");
+    expect(buttonIn(byTestId("vault-item-access"), "Ask first")).toBeDefined();
+  });
+});
+
+describe("an older server", () => {
+  it("finishes a new item's save and says the Block it dropped didn't apply", async () => {
+    vi.stubGlobal("matchMedia", () => ({
+      matches: false,
+      addEventListener() {},
+      removeEventListener() {},
+    }));
+    // A server from before Block lists and saves items without it.
+    vault.put.mockResolvedValue(rows[3]);
+    await render();
+    await startNew("api_key");
+    await type(field("Site"), "https://svc.example.com");
+    await type(field("Value"), FAKE_VALUE);
+    await click(buttonIn(byTestId("vault-item-access"), "Block")!);
+    await click("vault-editor-save");
+    expect(vault.put).toHaveBeenCalledOnce();
+    expect(vault.put.mock.lastCall?.[0]).toMatchObject({ policy: "off" });
+    // The new item is saved: the form gives way to it, saying the Block didn't apply.
+    expect(editor()).toBeNull();
+    expect(detail()?.textContent).toContain("Saved, but this server can't block bots yet.");
+  });
 });
 
 describe("VaultSettings list", () => {
@@ -223,15 +585,76 @@ describe("VaultSettings list", () => {
       "deploy-token$DEPLOY_TOKEN",
     ]);
     expect(document.body.innerHTML).not.toContain(FAKE_VALUE);
-    expect(vault.list.mock.calls[0]?.[0]).toEqual({ scope: "account" });
+    expect(vault.list.mock.calls[0]?.[0]).toEqual({ scope: "account", askFirst: true });
   });
 
-  it("shows only New until there is something to list", async () => {
+  it("says what the Vault is for, with or without items", async () => {
+    await render();
+    expect(byTestId("vault-intro").textContent).toBe(
+      "Logins, cards and details your bots can use for you.",
+    );
+    expect(find("vault-empty")).toBeNull();
+  });
+
+  it("offers each kind to add, and what it does, until there is something to list", async () => {
     vault.list.mockResolvedValue([]);
     await render();
     expect(find("vault-new")).not.toBeNull();
     expect(find("vault-card")).toBeNull();
     expect(find("vault-filter-all")).toBeNull();
+    expect(find("vault-intro")).not.toBeNull();
+    const empty = byTestId("vault-empty");
+    expect([...empty.querySelectorAll("li button")].map((button) => button.textContent)).toEqual([
+      "LoginSigns in only on its own site",
+      "CardAsks you before every payment",
+      "ContactFills in a name, address or phone",
+      "API keyLets a bot call a service",
+      "VariableSet in the bot's commands",
+    ]);
+    expect(empty.textContent).toContain(
+      "Bots type saved passwords and card numbers without seeing them.",
+    );
+
+    await click("vault-start-card");
+    expect(editor()).not.toBeNull();
+    expect(field("Card number")).not.toBeNull();
+  });
+
+  it("never offers a first item once a save lands but the list can't be read again", async () => {
+    const saved = item({ name: "netbird_setup_key", auth: { type: "command" } });
+    vault.list.mockResolvedValueOnce([]).mockRejectedValue(new Error("offline"));
+    vault.put.mockResolvedValue(saved);
+    await render();
+    await click("vault-start-variable");
+    await type(field("Variable name"), "NETBIRD_SETUP_KEY");
+    await type(field("Value"), FAKE_VALUE);
+    await click(buttonIn(editor(), "Save")!);
+    expect(editor()).toBeNull();
+    expect(document.body.textContent).toContain("Could not load credentials.");
+    expect(find("vault-empty")).toBeNull();
+    expect(rowNamed("netbird_setup_key")).not.toBeNull();
+  });
+
+  it("doesn't call a Vault empty when reading it again fails", async () => {
+    vault.list.mockResolvedValueOnce([]).mockRejectedValue(new Error("offline"));
+    await render();
+    expect(find("vault-empty")).not.toBeNull();
+    await act(async () => {
+      await queryClient.refetchQueries();
+    });
+    await flush();
+    expect(document.body.textContent).toContain("Could not load credentials.");
+    expect(find("vault-empty")).toBeNull();
+  });
+
+  it("opens the editor for the kind picked from the empty Vault", async () => {
+    vault.list.mockResolvedValue([]);
+    await render();
+    await click("vault-start-variable");
+    expect(editor()?.textContent).toContain("New variable");
+    await click("vault-back");
+    await click("vault-start-login");
+    expect(editor()?.textContent).toContain("New login");
   });
 
   it("lists the bots' email addresses in the account's vault only", async () => {
@@ -285,7 +708,7 @@ describe("VaultSettings list", () => {
 
   it("reads and writes the Space's own vault when scoped to the Space", async () => {
     await render("space");
-    expect(vault.list.mock.calls[0]?.[0]).toEqual({ scope: "space" });
+    expect(vault.list.mock.calls[0]?.[0]).toEqual({ scope: "space", askFirst: true });
     await click(rowNamed("deploy-token"));
     await click("vault-item-remove");
     await click("vault-item-remove-confirm");
@@ -305,6 +728,7 @@ describe("VaultSettings new items", () => {
     await click(buttonIn(editor(), "Save")!);
     expect(vault.put).toHaveBeenCalledWith({
       scope: "account",
+      askFirst: true,
       destination: { name: undefined, origin: "", auth: { type: "card" } },
       value: encodeCardSecret({
         number: "4242424242424242",
@@ -328,6 +752,7 @@ describe("VaultSettings new items", () => {
     await click(buttonIn(editor(), "Save")!);
     expect(vault.put).toHaveBeenCalledWith({
       scope: "account",
+      askFirst: true,
       destination: { name: undefined, origin: "", auth: { type: "contact" } },
       value: JSON.stringify({ line1: "1 Main St" }),
       title: "Office",
@@ -348,6 +773,7 @@ describe("VaultSettings new items", () => {
     await click(buttonIn(editor(), "Save")!);
     expect(vault.put).toHaveBeenCalledWith({
       scope: "account",
+      askFirst: true,
       destination: {
         name: undefined,
         origin: "https://portal.example.com",
@@ -373,6 +799,7 @@ describe("VaultSettings new items", () => {
     await click(buttonIn(editor(), "Save")!);
     expect(vault.put).toHaveBeenCalledWith({
       scope: "account",
+      askFirst: true,
       destination: {
         name: undefined,
         origin: "https://api.example.com",
@@ -396,9 +823,13 @@ describe("VaultSettings new items", () => {
     await click(buttonIn(editor(), "Save")!);
     expect(vault.put).toHaveBeenCalledWith({
       scope: "account",
+      askFirst: true,
       destination: { name: "netbird_setup_key", origin: "", auth: { type: "command" } },
       value: FAKE_VALUE,
     });
+    // A new item's save returns to the list; only an edit, or a notice, opens the item.
+    expect(editor()).toBeNull();
+    expect(detail()).toBeNull();
   });
 });
 
@@ -492,6 +923,7 @@ describe("VaultSettings item details", () => {
     await click(buttonIn(editor(), "Save")!);
     expect(vault.put).toHaveBeenCalledWith({
       scope: "account",
+      askFirst: true,
       destination: { name: "visa", origin: "", auth: { type: "card" } },
       value: encodeCardSecret({
         number: "4242424242424242",
@@ -513,6 +945,7 @@ describe("VaultSettings item details", () => {
     await click(buttonIn(editor(), "Save")!);
     expect(vault.put).toHaveBeenCalledWith({
       scope: "account",
+      askFirst: true,
       destination: {
         name: "custom",
         origin: "https://svc.example.com",

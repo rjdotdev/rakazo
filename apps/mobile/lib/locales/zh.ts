@@ -1,5 +1,15 @@
 export const ZH_MESSAGES: Record<string, string> = {
   Haptics: "触感反馈",
+  "Logins, cards and details your bots can use for you.":
+    "机器人可以代你使用的登录信息、卡片和资料。",
+  "Add your first item": "添加第一项",
+  "Bots type saved passwords and card numbers without seeing them.":
+    "机器人会输入已保存的密码和卡号，但看不到它们。",
+  "Signs in only on its own site": "只在对应网站登录",
+  "Asks you before every payment": "每次付款前都会询问你",
+  "Fills in a name, address or phone": "填写姓名、地址或电话",
+  "Lets a bot call a service": "让机器人调用某个服务",
+  "Set in the bot's commands": "在机器人的命令中设置",
   "Add rule": "添加规则",
   "Tool name": "工具名称",
   Address: "地址",
@@ -28,7 +38,6 @@ export const ZH_MESSAGES: Record<string, string> = {
   Logins: "登录信息",
   "Name on card": "持卡人姓名",
   "New item": "新项目",
-  "Nothing saved yet.": "尚未保存任何内容。",
   Phone: "电话",
   "Security code": "安全码",
   "State or region": "州或地区",
@@ -1451,6 +1460,23 @@ export const ZH_MESSAGES: Record<string, string> = {
   "Read from the page, not checked": "读取自页面，未核实",
   Total: "合计",
   "{name} options": "{name}的选项",
+  "Used {when} by {bot}": "{bot} 于{when}使用",
+  Bots: "机器人",
+  "Saved, but this server can't block bots yet.": "已保存，但此服务器暂时无法阻止机器人。",
+  "Chosen bots": "所选机器人",
+  "This item is blocked for bots. Allow it in the Vault, or dismiss the request.":
+    "此项目已阻止机器人使用。请在保险库中允许，或关闭此请求。",
+  "No bots": "没有机器人",
+  "This limits only this Space's bots. Your other Spaces choose for their own.":
+    "这只限制此空间的机器人。你的其他空间会为各自的机器人选择。",
+  "This Space keeps its own vault, so its bots can't use account items.":
+    "此空间使用自己的保管库，因此其中的机器人无法使用账户项目。",
+  "Ask first": "先询问",
+  "Saved, but this server can't ask you first.": "已保存，但此服务器无法先询问你。",
+  "Saved, but this server can't limit an item to chosen bots.":
+    "已保存，但此服务器无法将项目限制为所选机器人。",
+  "This bot can't use this item. Change it in the Vault, or dismiss the request.":
+    "此机器人无法使用此项目。请在保险库中更改，或关闭此请求。",
 };
 
 export const PEER_MESSAGE_FORMS: Partial<Record<Intl.LDMLPluralRule, string>> = {

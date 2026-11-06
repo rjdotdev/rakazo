@@ -1,5 +1,15 @@
 export const PL_MESSAGES: Record<string, string> = {
   Haptics: "Haptyka",
+  "Logins, cards and details your bots can use for you.":
+    "Loginy, karty i dane, których Twoje boty mogą używać za Ciebie.",
+  "Add your first item": "Dodaj pierwszy element",
+  "Bots type saved passwords and card numbers without seeing them.":
+    "Boty wpisują zapisane hasła i numery kart, nie widząc ich.",
+  "Signs in only on its own site": "Loguje tylko na swojej stronie",
+  "Asks you before every payment": "Pyta Cię przed każdą płatnością",
+  "Fills in a name, address or phone": "Wpisuje imię i nazwisko, adres lub telefon",
+  "Lets a bot call a service": "Pozwala botowi wywołać usługę",
+  "Set in the bot's commands": "Ustawiana w poleceniach bota",
   "Add rule": "Dodaj regułę",
   "Tool name": "Nazwa narzędzia",
   Address: "Adres",
@@ -28,7 +38,6 @@ export const PL_MESSAGES: Record<string, string> = {
   Logins: "Loginy",
   "Name on card": "Imię i nazwisko na karcie",
   "New item": "Nowy element",
-  "Nothing saved yet.": "Jeszcze nic nie zapisano.",
   Phone: "Telefon",
   "Security code": "Kod zabezpieczający",
   "State or region": "Stan lub region",
@@ -1439,6 +1448,25 @@ export const PL_MESSAGES: Record<string, string> = {
   "Read from the page, not checked": "Odczytane ze strony, niesprawdzone",
   Total: "Razem",
   "{name} options": "Opcje modelu {name}",
+  "Used {when} by {bot}": "Użyte {when} przez {bot}",
+  Bots: "Boty",
+  "Saved, but this server can't block bots yet.":
+    "Zapisano, ale ten serwer nie może jeszcze blokować botów.",
+  "Chosen bots": "Wybrane boty",
+  "This item is blocked for bots. Allow it in the Vault, or dismiss the request.":
+    "Ten element jest zablokowany dla botów. Zezwól na niego w Sejfie lub odrzuć prośbę.",
+  "No bots": "Brak botów",
+  "This limits only this Space's bots. Your other Spaces choose for their own.":
+    "To ogranicza tylko boty tej przestrzeni. Twoje inne przestrzenie wybierają dla własnych.",
+  "This Space keeps its own vault, so its bots can't use account items.":
+    "Ta przestrzeń ma własny sejf, więc jej boty nie mogą używać elementów konta.",
+  "Ask first": "Najpierw zapytaj",
+  "Saved, but this server can't ask you first.":
+    "Zapisano, ale ten serwer nie może najpierw zapytać.",
+  "Saved, but this server can't limit an item to chosen bots.":
+    "Zapisano, ale ten serwer nie może ograniczyć elementu do wybranych botów.",
+  "This bot can't use this item. Change it in the Vault, or dismiss the request.":
+    "Ten bot nie może używać tego elementu. Zmień to w Sejfie lub odrzuć prośbę.",
 };
 
 export const PEER_MESSAGE_FORMS: Partial<Record<Intl.LDMLPluralRule, string>> = {

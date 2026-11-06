@@ -680,6 +680,10 @@ msgstr ""
 msgid "Add workspace"
 msgstr "वर्कस्पेस जोड़ें"
 
+#: src/components/VaultSettings.tsx
+msgid "Add your first item"
+msgstr "अपना पहला आइटम जोड़ें"
+
 #: src/components/integrations/plugin-marketplace.tsx
 #: src/pages/PluginsOverlay.tsx
 msgid "Added"
@@ -750,6 +754,7 @@ msgid "All time"
 msgstr ""
 
 #: src/components/ApprovalRulesSettings.tsx
+#: src/components/vault/VaultItemAccess.tsx
 msgid "Allow"
 msgstr "अनुमति दें"
 
@@ -982,6 +987,14 @@ msgstr ""
 msgid "Ask"
 msgstr "पूछें"
 
+#: src/components/vault/VaultItemAccess.tsx
+msgid "Ask first"
+msgstr "पहले पूछें"
+
+#: src/components/VaultSettings.tsx
+msgid "Asks you before every payment"
+msgstr "हर भुगतान से पहले आपसे पूछता है"
+
 #: src/pages/shell/computer-panel.tsx
 msgid "Asleep"
 msgstr "स्लीप में"
@@ -1127,6 +1140,7 @@ msgid "Billing period"
 msgstr "बिलिंग अवधि"
 
 #: src/components/ApprovalRulesSettings.tsx
+#: src/components/vault/VaultItemAccess.tsx
 msgid "Block"
 msgstr "ब्लॉक करें"
 
@@ -1195,9 +1209,18 @@ msgstr "बॉट का मॉडल"
 msgid "Both"
 msgstr ""
 
+#: src/components/vault/VaultItemAccess.tsx
+#: src/components/vault/VaultItemDetail.tsx
+msgid "Bots"
+msgstr "बॉट"
+
 #: src/components/ModelCredits.tsx
 msgid "Bots and browser automation"
 msgstr ""
+
+#: src/components/VaultSettings.tsx
+msgid "Bots type saved passwords and card numbers without seeing them."
+msgstr "बॉट सेव किए गए पासवर्ड और कार्ड नंबर बिना देखे टाइप करते हैं।"
 
 #: src/components/SharedSpaceRules.tsx
 msgid "Bots use the accounts of whoever messages them"
@@ -3323,6 +3346,10 @@ msgstr "फ़ाइलें या फ़ोल्डर, हर पंक्�
 msgid "Files your bots create, like reports, docs and images, collect here."
 msgstr ""
 
+#: src/components/VaultSettings.tsx
+msgid "Fills in a name, address or phone"
+msgstr "नाम, पता या फ़ोन भरता है"
+
 #: src/pages/GroupPanel.tsx
 msgid "Filter bots"
 msgstr ""
@@ -3902,6 +3929,10 @@ msgstr ""
 msgid "Let bots use this computer"
 msgstr ""
 
+#: src/components/VaultSettings.tsx
+msgid "Lets a bot call a service"
+msgstr "बॉट को किसी सेवा को कॉल करने देता है"
+
 #: src/pages/MemorySettingsOverlay.tsx
 msgid "Lets bots save and recall facts by meaning, alongside MEMORY.md."
 msgstr "बॉट्स को MEMORY.md के साथ-साथ अर्थ के आधार पर तथ्य सहेजने और याद करने देता है।"
@@ -4020,6 +4051,10 @@ msgstr ""
 #: src/components/vault/kinds.tsx
 msgid "Logins"
 msgstr ""
+
+#: src/components/VaultSettings.tsx
+msgid "Logins, cards and details your bots can use for you."
+msgstr "लॉगिन, कार्ड और जानकारी, जिन्हें आपके बॉट आपके लिए इस्तेमाल कर सकते हैं।"
 
 #: src/pages/shell/agent-import.tsx
 msgid "Looks like it contains a key"
@@ -4584,8 +4619,9 @@ msgid "No authentication"
 msgstr "कोई प्रमाणीकरण नहीं"
 
 #: src/components/integrations/agent-access.tsx
+#: src/components/vault/VaultItemDetail.tsx
 msgid "No bots"
-msgstr ""
+msgstr "कोई बॉट नहीं"
 
 #: src/pages/GroupPanel.tsx
 #: src/pages/shell/bot-picker.tsx
@@ -5857,6 +5893,18 @@ msgstr "सहेजा गया"
 msgid "Saved, but list refresh failed"
 msgstr "सहेजा गया, लेकिन सूची रिफ़्रेश विफल रही"
 
+#: src/components/VaultSettings.tsx
+msgid "Saved, but this server can't ask you first."
+msgstr "सहेजा गया, लेकिन यह सर्वर पहले आपसे पूछ नहीं सकता।"
+
+#: src/components/VaultSettings.tsx
+msgid "Saved, but this server can't block bots yet."
+msgstr "सहेजा गया, लेकिन यह सर्वर अभी बॉट को ब्लॉक नहीं कर सकता।"
+
+#: src/components/VaultSettings.tsx
+msgid "Saved, but this server can't limit an item to chosen bots."
+msgstr "सहेजा गया, लेकिन यह सर्वर किसी आइटम को चुने गए बॉट तक सीमित नहीं कर सकता।"
+
 #: src/pages/model-settings/use-model-settings.ts
 msgid "Saved."
 msgstr "सहेजा गया।"
@@ -6075,6 +6123,10 @@ msgstr "सर्वर URL"
 msgid "Set"
 msgstr "सेट करें"
 
+#: src/components/VaultSettings.tsx
+msgid "Set in the bot's commands"
+msgstr "बॉट के कमांड में सेट होता है"
+
 #: src/components/call/CallCard.tsx
 #: src/components/SidebarFooter.tsx
 #: src/pages/MessagingSettingsPanel.tsx
@@ -6234,6 +6286,10 @@ msgstr "साइन अप करें"
 #: src/components/integrations/plugin-marketplace.tsx
 msgid "Sign-in cancelled. Try again."
 msgstr ""
+
+#: src/components/VaultSettings.tsx
+msgid "Signs in only on its own site"
+msgstr "सिर्फ़ अपनी साइट पर साइन इन करता है"
 
 #: src/components/vault/VaultItemDetail.tsx
 #: src/components/vault/VaultItemEditor.tsx
@@ -6729,6 +6785,10 @@ msgstr "यह बैकअप पढ़ा नहीं जा सका।"
 msgid "This bot"
 msgstr "यह बॉट"
 
+#: src/lib/user-error.ts
+msgid "This bot can't use this item. Change it in the Vault, or dismiss the request."
+msgstr "यह बॉट इस आइटम का उपयोग नहीं कर सकता। इसे वॉल्ट में बदलें, या अनुरोध खारिज करें।"
+
 #: src/pages/shell/computer-view.tsx
 msgid "This bot runs on this computer, not a Linux desktop. Shell and files use your home folder."
 msgstr "यह बॉट इसी कंप्यूटर पर चलता है, किसी Linux डेस्कटॉप पर नहीं। शेल और फ़ाइलें आपके होम फ़ोल्डर का उपयोग करती हैं।"
@@ -6787,6 +6847,14 @@ msgstr "यह इंपोर्ट पहले ही इस्तेमा�
 #: src/pages/Invite.tsx
 msgid "This invite link is no longer valid."
 msgstr ""
+
+#: src/lib/user-error.ts
+msgid "This item is blocked for bots. Allow it in the Vault, or dismiss the request."
+msgstr "यह आइटम बॉट के लिए ब्लॉक है। इसे वॉल्ट में अनुमति दें, या अनुरोध खारिज करें।"
+
+#: src/components/VaultSettings.tsx
+msgid "This limits only this Space's bots. Your other Spaces choose for their own."
+msgstr "यह केवल इस कार्यस्थान के बॉट को सीमित करता है। आपके दूसरे कार्यस्थान अपने बॉट के लिए खुद चुनते हैं।"
 
 #: src/pages/HostComputerPrompt.tsx
 msgid "this Mac"
@@ -6865,6 +6933,10 @@ msgstr "यह सर्वर पहले से कनेक्टेड ह�
 #: src/lib/run-error.ts
 msgid "This server's tool result does not fit the model. Turn off Keep tool results whole for that server, or choose another model."
 msgstr ""
+
+#: src/components/VaultSettings.tsx
+msgid "This Space keeps its own vault, so its bots can't use account items."
+msgstr "इस कार्यस्थान का अपना वॉल्ट है, इसलिए इसके बॉट खाते के आइटम उपयोग नहीं कर सकते।"
 
 #: src/pages/model-settings/connection-controls.tsx
 msgid "This subscription sign-in is not available in Rakazo yet. Use a deployment credential or choose another provider."
@@ -7202,6 +7274,10 @@ msgstr ""
 #: src/pages/memory-providers/HonchoSettingsForm.tsx
 msgid "Use up to 512 letters, digits, _ or -."
 msgstr ""
+
+#: src/components/vault/VaultItemActivity.tsx
+msgid "Used {when} by {bot}"
+msgstr "{bot} ने {when} इस्तेमाल किया"
 
 #: src/pages/memory-providers/HonchoSettingsForm.tsx
 msgid "User peer"

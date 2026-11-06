@@ -10,7 +10,7 @@ import { useI18n } from "../../lib/i18n";
 import { useMobileTokens } from "../../lib/native";
 import { secretDestinationLabel, siteHost } from "../../lib/secret-destination";
 import { secretFieldTraits } from "../../lib/secret-field-traits";
-import { errorText } from "../../lib/user-error";
+import { errorText, secretAnswerErrorText } from "../../lib/user-error";
 import { vaultKindSymbol } from "../../lib/vault";
 import { NativeActionButton } from "../native-action-button";
 import { NativeSymbol } from "../native-symbol";
@@ -102,7 +102,9 @@ export function AskBlock({
       if (secretInput) setSaved(true);
     } catch (cause) {
       setError(
-        secretInput ? t("Could not send answer") : errorText(cause, t("Could not send answer")),
+        secretInput
+          ? secretAnswerErrorText(cause, t("Could not send answer"))
+          : errorText(cause, t("Could not send answer")),
       );
     } finally {
       setSubmitting(false);

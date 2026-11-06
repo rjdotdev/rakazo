@@ -680,6 +680,10 @@ msgstr "הוספת טריגר"
 msgid "Add workspace"
 msgstr "הוספת סביבת עבודה"
 
+#: src/components/VaultSettings.tsx
+msgid "Add your first item"
+msgstr "הוספת הפריט הראשון"
+
 #: src/components/integrations/plugin-marketplace.tsx
 #: src/pages/PluginsOverlay.tsx
 msgid "Added"
@@ -750,6 +754,7 @@ msgid "All time"
 msgstr "כל הזמנים"
 
 #: src/components/ApprovalRulesSettings.tsx
+#: src/components/vault/VaultItemAccess.tsx
 msgid "Allow"
 msgstr "לאפשר"
 
@@ -982,6 +987,14 @@ msgstr "תוצרים"
 msgid "Ask"
 msgstr "לשאול"
 
+#: src/components/vault/VaultItemAccess.tsx
+msgid "Ask first"
+msgstr "לשאול קודם"
+
+#: src/components/VaultSettings.tsx
+msgid "Asks you before every payment"
+msgstr "שואל אותך לפני כל תשלום"
+
 #: src/pages/shell/computer-panel.tsx
 msgid "Asleep"
 msgstr "במצב שינה"
@@ -1127,6 +1140,7 @@ msgid "Billing period"
 msgstr "תקופת חיוב"
 
 #: src/components/ApprovalRulesSettings.tsx
+#: src/components/vault/VaultItemAccess.tsx
 msgid "Block"
 msgstr "לחסום"
 
@@ -1195,9 +1209,18 @@ msgstr "המודל של הבוט"
 msgid "Both"
 msgstr ""
 
+#: src/components/vault/VaultItemAccess.tsx
+#: src/components/vault/VaultItemDetail.tsx
+msgid "Bots"
+msgstr "בוטים"
+
 #: src/components/ModelCredits.tsx
 msgid "Bots and browser automation"
 msgstr ""
+
+#: src/components/VaultSettings.tsx
+msgid "Bots type saved passwords and card numbers without seeing them."
+msgstr "הבוטים מקלידים סיסמאות ומספרי כרטיס שמורים בלי לראות אותם."
 
 #: src/components/SharedSpaceRules.tsx
 msgid "Bots use the accounts of whoever messages them"
@@ -3323,6 +3346,10 @@ msgstr ""
 msgid "Files your bots create, like reports, docs and images, collect here."
 msgstr "קבצים שהבוטים שלך יוצרים, כמו דוחות, מסמכים ותמונות, נאספים כאן."
 
+#: src/components/VaultSettings.tsx
+msgid "Fills in a name, address or phone"
+msgstr "ממלא שם, כתובת או טלפון"
+
 #: src/pages/GroupPanel.tsx
 msgid "Filter bots"
 msgstr ""
@@ -3902,6 +3929,10 @@ msgstr ""
 msgid "Let bots use this computer"
 msgstr ""
 
+#: src/components/VaultSettings.tsx
+msgid "Lets a bot call a service"
+msgstr "מאפשר לבוט לפנות לשירות"
+
 #: src/pages/MemorySettingsOverlay.tsx
 msgid "Lets bots save and recall facts by meaning, alongside MEMORY.md."
 msgstr "מאפשר לבוטים לשמור ולשלוף עובדות לפי משמעות, לצד MEMORY.md."
@@ -4020,6 +4051,10 @@ msgstr ""
 #: src/components/vault/kinds.tsx
 msgid "Logins"
 msgstr ""
+
+#: src/components/VaultSettings.tsx
+msgid "Logins, cards and details your bots can use for you."
+msgstr "פרטי התחברות, כרטיסים ופרטים שהבוטים שלך יכולים להשתמש בהם בשבילך."
 
 #: src/pages/shell/agent-import.tsx
 msgid "Looks like it contains a key"
@@ -4584,8 +4619,9 @@ msgid "No authentication"
 msgstr "ללא אימות"
 
 #: src/components/integrations/agent-access.tsx
+#: src/components/vault/VaultItemDetail.tsx
 msgid "No bots"
-msgstr ""
+msgstr "אין בוטים"
 
 #: src/pages/GroupPanel.tsx
 #: src/pages/shell/bot-picker.tsx
@@ -5857,6 +5893,18 @@ msgstr "נשמר"
 msgid "Saved, but list refresh failed"
 msgstr "נשמר, אבל רענון הרשימה נכשל"
 
+#: src/components/VaultSettings.tsx
+msgid "Saved, but this server can't ask you first."
+msgstr "נשמר, אבל השרת הזה לא יכול לשאול אותך קודם."
+
+#: src/components/VaultSettings.tsx
+msgid "Saved, but this server can't block bots yet."
+msgstr "נשמר, אבל השרת הזה עדיין לא יכול לחסום בוטים."
+
+#: src/components/VaultSettings.tsx
+msgid "Saved, but this server can't limit an item to chosen bots."
+msgstr "נשמר, אבל השרת הזה לא יכול להגביל פריט לבוטים שנבחרו."
+
 #: src/pages/model-settings/use-model-settings.ts
 msgid "Saved."
 msgstr "נשמר."
@@ -6075,6 +6123,10 @@ msgstr "URL של השרת"
 msgid "Set"
 msgstr "הגדרה"
 
+#: src/components/VaultSettings.tsx
+msgid "Set in the bot's commands"
+msgstr "מוגדר בפקודות של הבוט"
+
 #: src/components/call/CallCard.tsx
 #: src/components/SidebarFooter.tsx
 #: src/pages/MessagingSettingsPanel.tsx
@@ -6234,6 +6286,10 @@ msgstr "הרשמה"
 #: src/components/integrations/plugin-marketplace.tsx
 msgid "Sign-in cancelled. Try again."
 msgstr ""
+
+#: src/components/VaultSettings.tsx
+msgid "Signs in only on its own site"
+msgstr "מתחבר רק באתר שלו"
 
 #: src/components/vault/VaultItemDetail.tsx
 #: src/components/vault/VaultItemEditor.tsx
@@ -6729,6 +6785,10 @@ msgstr "לא ניתן לקרוא את הגיבוי הזה."
 msgid "This bot"
 msgstr "הבוט הזה"
 
+#: src/lib/user-error.ts
+msgid "This bot can't use this item. Change it in the Vault, or dismiss the request."
+msgstr "הבוט הזה לא יכול להשתמש בפריט הזה. שנו זאת בכספת או דחו את הבקשה."
+
 #: src/pages/shell/computer-view.tsx
 msgid "This bot runs on this computer, not a Linux desktop. Shell and files use your home folder."
 msgstr "הבוט הזה פועל על המחשב הזה, לא על שולחן עבודה של Linux. המעטפת והקבצים משתמשים בתיקיית הבית."
@@ -6787,6 +6847,14 @@ msgstr "הייבוא הזה כבר נוצל. יש לבחור את הקבצים �
 #: src/pages/Invite.tsx
 msgid "This invite link is no longer valid."
 msgstr ""
+
+#: src/lib/user-error.ts
+msgid "This item is blocked for bots. Allow it in the Vault, or dismiss the request."
+msgstr "הפריט הזה חסום לבוטים. אפשרו אותו בכספת או דחו את הבקשה."
+
+#: src/components/VaultSettings.tsx
+msgid "This limits only this Space's bots. Your other Spaces choose for their own."
+msgstr "זה מגביל רק את הבוטים של המרחב הזה. המרחבים האחרים שלך בוחרים עבור הבוטים שלהם."
 
 #: src/pages/HostComputerPrompt.tsx
 msgid "this Mac"
@@ -6865,6 +6933,10 @@ msgstr "השרת הזה כבר מחובר. יש לנתק אותו קודם כד�
 #: src/lib/run-error.ts
 msgid "This server's tool result does not fit the model. Turn off Keep tool results whole for that server, or choose another model."
 msgstr ""
+
+#: src/components/VaultSettings.tsx
+msgid "This Space keeps its own vault, so its bots can't use account items."
+msgstr "למרחב הזה יש כספת משלו, ולכן הבוטים שלו לא יכולים להשתמש בפריטי החשבון."
 
 #: src/pages/model-settings/connection-controls.tsx
 msgid "This subscription sign-in is not available in Rakazo yet. Use a deployment credential or choose another provider."
@@ -7202,6 +7274,10 @@ msgstr ""
 #: src/pages/memory-providers/HonchoSettingsForm.tsx
 msgid "Use up to 512 letters, digits, _ or -."
 msgstr ""
+
+#: src/components/vault/VaultItemActivity.tsx
+msgid "Used {when} by {bot}"
+msgstr "נעשה שימוש {when} על ידי {bot}"
 
 #: src/pages/memory-providers/HonchoSettingsForm.tsx
 msgid "User peer"

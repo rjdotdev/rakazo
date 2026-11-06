@@ -1,5 +1,15 @@
 export const NL_MESSAGES: Record<string, string> = {
   Haptics: "Haptische feedback",
+  "Logins, cards and details your bots can use for you.":
+    "Logins, kaarten en gegevens die je bots voor je kunnen gebruiken.",
+  "Add your first item": "Voeg je eerste item toe",
+  "Bots type saved passwords and card numbers without seeing them.":
+    "Bots typen bewaarde wachtwoorden en kaartnummers zonder ze te zien.",
+  "Signs in only on its own site": "Logt alleen in op de eigen site",
+  "Asks you before every payment": "Vraagt het je voor elke betaling",
+  "Fills in a name, address or phone": "Vult een naam, adres of telefoonnummer in",
+  "Lets a bot call a service": "Laat een bot een dienst aanroepen",
+  "Set in the bot's commands": "Ingesteld in de opdrachten van de bot",
   "Add rule": "Regel toevoegen",
   "Tool name": "Toolnaam",
   Address: "Adres",
@@ -28,7 +38,6 @@ export const NL_MESSAGES: Record<string, string> = {
   Logins: "Logins",
   "Name on card": "Naam op kaart",
   "New item": "Nieuw item",
-  "Nothing saved yet.": "Nog niets bewaard.",
   Phone: "Telefoon",
   "Security code": "Beveiligingscode",
   "State or region": "Provincie of regio",
@@ -1446,6 +1455,25 @@ export const NL_MESSAGES: Record<string, string> = {
   "Read from the page, not checked": "Van de pagina gelezen, niet gecontroleerd",
   Total: "Totaal",
   "{name} options": "Opties voor {name}",
+  "Used {when} by {bot}": "{when} gebruikt door {bot}",
+  Bots: "Bots",
+  "Saved, but this server can't block bots yet.":
+    "Opgeslagen, maar deze server kan bots nog niet blokkeren.",
+  "Chosen bots": "Gekozen bots",
+  "This item is blocked for bots. Allow it in the Vault, or dismiss the request.":
+    "Dit item is geblokkeerd voor bots. Sta het toe in de Kluis of wijs het verzoek af.",
+  "No bots": "Geen bots",
+  "This limits only this Space's bots. Your other Spaces choose for their own.":
+    "Dit beperkt alleen de bots van deze space. Je andere spaces kiezen voor hun eigen bots.",
+  "This Space keeps its own vault, so its bots can't use account items.":
+    "Deze space heeft een eigen kluis, dus de bots ervan kunnen geen accountitems gebruiken.",
+  "Ask first": "Eerst vragen",
+  "Saved, but this server can't ask you first.":
+    "Opgeslagen, maar deze server kan je niet eerst vragen.",
+  "Saved, but this server can't limit an item to chosen bots.":
+    "Opgeslagen, maar deze server kan een item niet beperken tot gekozen bots.",
+  "This bot can't use this item. Change it in the Vault, or dismiss the request.":
+    "Deze bot kan dit item niet gebruiken. Wijzig het in de Kluis of wijs het verzoek af.",
 };
 
 export const PEER_MESSAGE_FORMS: Partial<Record<Intl.LDMLPluralRule, string>> = {

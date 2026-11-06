@@ -19,6 +19,11 @@ export function vaultKind(type: BotSecretAuthType): VaultKind {
   return type === "command" ? "variable" : "api_key";
 }
 
+// A contact isn't secret, so it has no Allow or Block.
+export function hasVaultAccess(kind: VaultKind): boolean {
+  return kind !== "contact";
+}
+
 function host(origin: string): string {
   return URL.canParse(origin) ? new URL(origin).host.replace(/^www\./, "") : origin;
 }

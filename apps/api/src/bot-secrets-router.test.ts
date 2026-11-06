@@ -93,6 +93,9 @@ function botSecretDeps(seed: Row[] = []) {
       }),
     },
     vaultCredential: botSecret,
+    // No item here is limited to chosen bots.
+    vaultCredentialBot: { findMany: vi.fn(async () => []) },
+    vaultCredentialLimit: { findMany: vi.fn(async () => []) },
     // Counted before a prepared value that was never committed is deleted from the store.
     secret: { count: vi.fn(async () => 0) },
     botSecret: { count: vi.fn(async () => 0) },
@@ -247,6 +250,9 @@ describe("botSecrets router", () => {
         note: "",
         createdAt: "2026-08-01T00:00:00.000Z",
         updatedAt: "2026-08-01T00:00:00.000Z",
+        policy: "allow",
+        allBots: true,
+        botIds: [],
       },
     ]);
     expect(result.text).not.toContain("enc:");
@@ -267,6 +273,9 @@ describe("botSecrets router", () => {
       note: "",
       createdAt: "2026-09-01T00:00:00.000Z",
       updatedAt: "2026-09-01T00:00:00.000Z",
+      policy: "allow",
+      allBots: true,
+      botIds: [],
     });
     expect(saved.text).not.toContain(FAKE_VALUE);
     expect(allowed.secrets.put).toHaveBeenCalledWith(
@@ -432,6 +441,9 @@ describe("botSecrets router", () => {
         note: "",
         createdAt: "2026-08-01T00:00:00.000Z",
         updatedAt: "2026-08-01T00:00:00.000Z",
+        policy: "allow",
+        allBots: true,
+        botIds: [],
       },
     ]);
   });
@@ -533,6 +545,34 @@ describe("vault router", () => {
       { contact: { city: "Springfield" } },
       { contact: { city: "Shelbyville" } },
     ]);
+  });
+
+  it("shows a login that asks first as Block to an app without Ask first, and keeps it", async () => {
+    const { rows, call } = botSecretDeps();
+    const login = { name: "work", origin: "https://login.example.test", auth: { type: "login" } };
+    const value = JSON.stringify({
+      fields: [{ label: "Password", value: FAKE_VALUE, hidden: true }],
+    });
+    const saved = await call("vault/put", {
+      destination: login,
+      value,
+      policy: "ask",
+      askFirst: true,
+    });
+    expect(saved.body.json).toMatchObject({ policy: "ask" });
+    const policies = async (input: object) =>
+      ((await call("vault/list", input)).body.json as { policy?: string }[]).map(
+        (item) => item.policy,
+      );
+    expect(await policies({ askFirst: true })).toEqual(["ask"]);
+    expect(await policies({})).toEqual(["off"]);
+    // An older app's save without a policy keeps it asking.
+    const relabeled = await call("vault/put", { destination: login, title: "Work" });
+    expect(relabeled.body.json).toMatchObject({ policy: "off" });
+    expect(rows[0]).toMatchObject({ title: "Work", policy: "ask" });
+    // Only a login asks first.
+    const key = await call("vault/put", { destination, value: FAKE_VALUE, policy: "ask" });
+    expect(key.status).toBe(400);
   });
 
   it("changes only the title or note of a saved item when no value is sent", async () => {

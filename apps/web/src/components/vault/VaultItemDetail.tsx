@@ -1,6 +1,12 @@
 import { Trans, useLingui } from "@lingui/react/macro";
-import type { BotSecretMetadata, VaultRevealed } from "@rakazo/contracts";
-import { BotSecretName, cardExpiry, commandVariableName, vaultKind } from "@rakazo/contracts";
+import type { BotSecretMetadata, SettingsScope, VaultRevealed } from "@rakazo/contracts";
+import {
+  BotSecretName,
+  cardExpiry,
+  commandVariableName,
+  hasVaultAccess,
+  vaultKind,
+} from "@rakazo/contracts";
 import { Button } from "@rakazo/ui-web";
 import { Check, Copy, Eye, EyeOff } from "lucide-react";
 import type { ReactNode } from "react";
@@ -8,6 +14,8 @@ import { useEffect, useRef, useState } from "react";
 import { useCopyText } from "../../lib/copy-text";
 import type { VaultAuth } from "./kinds";
 import { siteHost, useVaultKindLabels, VaultTile } from "./kinds";
+import { usePolicyLabels, useVaultBots } from "./VaultItemAccess";
+import { VaultItemActivity } from "./VaultItemActivity";
 import { VaultPageHeader } from "./VaultPageHeader";
 
 /** How long a shown value stays on screen. */
@@ -71,6 +79,7 @@ function addressLines(contact: NonNullable<NonNullable<BotSecretMetadata["previe
  * owner confirms it's them, and Edit and Remove.
  */
 export function VaultItemDetail({
+  scope,
   item,
   contactTitles,
   busy,
@@ -80,6 +89,7 @@ export function VaultItemDetail({
   onEdit,
   onRemove,
 }: {
+  scope: SettingsScope;
   item: BotSecretMetadata;
   /** Saved contacts' titles by name, for a card's billing address. */
   contactTitles: ReadonlyMap<string, string>;
@@ -95,6 +105,8 @@ export function VaultItemDetail({
 }) {
   const { t } = useLingui();
   const { one } = useVaultKindLabels();
+  const policyLabels = usePolicyLabels();
+  const bots = useVaultBots(item.allBots === false);
   // An item saved under a name the current rules refuse can only be removed.
   const auth: VaultAuth | null =
     item.auth && BotSecretName.safeParse(item.name).success ? item.auth : null;
@@ -312,6 +324,22 @@ export function VaultItemDetail({
         {item.note}
       </DetailRow>,
     );
+  // Blocked, no bot may use it; asking first, only the bots it is limited to may ask. The bots it
+  // is limited to show once the list has loaded, never as No bots before.
+  const blocked = item.policy === "off";
+  const chosen = (bots ?? []).filter((bot) => item.botIds?.includes(bot.id)).map((bot) => bot.name);
+  const access = [
+    kind && hasVaultAccess(kind) && (blocked || item.policy === "ask")
+      ? policyLabels[item.policy as "off" | "ask"]
+      : "",
+    kind && !blocked && item.allBots === false && bots ? chosen.join(", ") || t`No bots` : "",
+  ].filter(Boolean);
+  if (access.length)
+    rows.push(
+      <DetailRow key="access" label={t`Bots`} testId="vault-item-access-detail">
+        {access.join(" · ")}
+      </DetailRow>,
+    );
 
   const secretName = item.title;
   return (
@@ -329,6 +357,7 @@ export function VaultItemDetail({
         onBack={() => !busy && onClose()}
       />
       {rows.length ? <div>{rows}</div> : null}
+      <VaultItemActivity scope={scope} name={item.name} />
       {error ? (
         <p role="alert" className="text-body-sm text-destructive">
           {error}
