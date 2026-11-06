@@ -31,10 +31,12 @@ import {
 } from "@rakazo/adapters";
 import type { Actor, Bot, ProductEvent } from "@rakazo/contracts";
 import {
+  BLOCKED_ITEM_ANSWER,
   CONNECTOR_AUTH_UNAVAILABLE,
   MCP_OAUTH_CLIENT_REQUIRED,
   MODEL_KEY_FORMAT_ERROR,
   REPLY_QUOTE_MAX_LENGTH,
+  UNCHOSEN_ITEM_ANSWER,
 } from "@rakazo/contracts";
 import { openScreenCapability } from "@rakazo/core/node/screen-capability";
 import type { PrismaClient } from "@rakazo/db";
@@ -1055,9 +1057,14 @@ describe("thread answer delivery", () => {
   });
 });
 
-describe("oversized one-time answer", () => {
-  it("says the answer is too long, without echoing it", async () => {
-    const answerRunInput = vi.fn().mockRejectedValue(new AnswerTooLongError());
+describe("answers the server can't save", () => {
+  it.each([
+    ["too long", new AnswerTooLongError(), "This answer is too long."],
+    // The person blocked bots from the item while the request waited.
+    ["for a blocked item", new Error(BLOCKED_ITEM_ANSWER), BLOCKED_ITEM_ANSWER],
+    ["for an item chosen for other bots", new Error(UNCHOSEN_ITEM_ANSWER), UNCHOSEN_ITEM_ANSWER],
+  ])("says why one is %s, without echoing it", async (_, error, message) => {
+    const answerRunInput = vi.fn().mockRejectedValue(error);
     const enqueue = vi.fn();
     const prisma = {
       bot: {
@@ -1102,7 +1109,7 @@ describe("oversized one-time answer", () => {
 
     expect(response.status).toBe(400);
     const body = await response.text();
-    expect(body).toContain("This answer is too long.");
+    expect(body).toContain(message);
     expect(body).not.toContain("fake-code-");
     expect(enqueue).not.toHaveBeenCalled();
   });

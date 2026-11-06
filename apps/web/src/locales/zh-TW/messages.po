@@ -647,6 +647,7 @@ msgstr "空間操作"
 msgid "Active"
 msgstr "啟用"
 
+#: src/components/vault/VaultItemActivity.tsx
 #: src/pages/shell/sidebar-header.tsx
 msgid "Activity"
 msgstr "動態"
@@ -782,6 +783,10 @@ msgstr "新增觸發器"
 msgid "Add workspace"
 msgstr "新增工作區"
 
+#: src/components/VaultSettings.tsx
+msgid "Add your first item"
+msgstr "新增第一個項目"
+
 #: src/components/integrations/plugin-marketplace.tsx
 #: src/pages/PluginsOverlay.tsx
 msgid "Added"
@@ -856,6 +861,7 @@ msgid "All time"
 msgstr "不限時間"
 
 #: src/components/ApprovalRulesSettings.tsx
+#: src/components/vault/VaultItemAccess.tsx
 msgid "Allow"
 msgstr ""
 
@@ -1079,6 +1085,7 @@ msgstr "封存"
 msgid "archived"
 msgstr "已封存"
 
+#: src/components/vault/VaultItemAccess.tsx
 #: src/pages/shell/archived-chats.tsx
 msgid "Archived"
 msgstr "已封存"
@@ -1096,6 +1103,10 @@ msgstr "成品"
 msgid "Ask"
 msgstr "詢問"
 
+#: src/components/vault/VaultItemAccess.tsx
+msgid "Ask first"
+msgstr "先詢問"
+
 #: src/components/ApprovalRulesSettings.tsx
 msgid "Asks before sending, spending or changing anything in your apps."
 msgstr ""
@@ -1103,6 +1114,10 @@ msgstr ""
 #: src/components/ApprovalRulesSettings.tsx
 msgid "Asks only before purchases and the first use of your computer. Only Block rules apply."
 msgstr ""
+
+#: src/components/VaultSettings.tsx
+msgid "Asks you before every payment"
+msgstr "每次付款前都會詢問你"
 
 #: src/pages/shell/computer-panel.tsx
 msgid "Asleep"
@@ -1250,6 +1265,7 @@ msgid "Billing period"
 msgstr "帳單週期"
 
 #: src/components/ApprovalRulesSettings.tsx
+#: src/components/vault/VaultItemAccess.tsx
 msgid "Block"
 msgstr ""
 
@@ -1320,9 +1336,18 @@ msgstr "機器人的模型"
 msgid "Both"
 msgstr "兩者都有"
 
+#: src/components/vault/VaultItemAccess.tsx
+#: src/components/vault/VaultItemDetail.tsx
+msgid "Bots"
+msgstr "機器人"
+
 #: src/components/ModelCredits.tsx
 msgid "Bots and browser automation"
 msgstr "機器人與瀏覽器自動化"
+
+#: src/components/VaultSettings.tsx
+msgid "Bots type saved passwords and card numbers without seeing them."
+msgstr "機器人會輸入已儲存的密碼和卡號，但看不到它們。"
 
 #: src/components/SharedSpaceRules.tsx
 msgid "Bots use the accounts of whoever messages them"
@@ -2350,6 +2375,7 @@ msgstr "無法載入成品。"
 msgid "Could not load billing"
 msgstr "無法載入帳務資訊"
 
+#: src/components/vault/VaultItemDetail.tsx
 #: src/pages/IntegrationSetup.tsx
 msgid "Could not load bots. Reload to try again."
 msgstr "無法載入機器人，請重新載入後再試。"
@@ -3483,6 +3509,10 @@ msgstr "檔案或資料夾，每行一個"
 msgid "Files your bots create, like reports, docs and images, collect here."
 msgstr "你的機器人建立的檔案，例如報告、文件和圖片，都會匯集在這裡。"
 
+#: src/components/VaultSettings.tsx
+msgid "Fills in a name, address or phone"
+msgstr "填寫姓名、地址或電話"
+
 #: src/pages/GroupPanel.tsx
 msgid "Filter bots"
 msgstr "篩選機器人"
@@ -4066,6 +4096,10 @@ msgstr ""
 #: src/components/ComputerDeviceSettings.tsx
 msgid "Let bots use this computer"
 msgstr "允許機器人使用這部電腦"
+
+#: src/components/VaultSettings.tsx
+msgid "Lets a bot call a service"
+msgstr "讓機器人呼叫某個服務"
 
 #: src/pages/MemorySettingsOverlay.tsx
 msgid "Lets bots save and recall facts by meaning, alongside MEMORY.md."
@@ -4758,6 +4792,7 @@ msgid "No authentication"
 msgstr "無驗證"
 
 #: src/components/integrations/agent-access.tsx
+#: src/components/vault/VaultItemDetail.tsx
 msgid "No bots"
 msgstr "沒有機器人"
 
@@ -6040,6 +6075,18 @@ msgstr "已儲存"
 msgid "Saved, but list refresh failed"
 msgstr "已儲存，但清單重新整理失敗"
 
+#: src/components/VaultSettings.tsx
+msgid "Saved, but this server can't ask you first."
+msgstr "已儲存，但此伺服器無法先詢問你。"
+
+#: src/components/VaultSettings.tsx
+msgid "Saved, but this server can't block bots yet."
+msgstr "已儲存，但此伺服器尚無法封鎖機器人。"
+
+#: src/components/VaultSettings.tsx
+msgid "Saved, but this server can't limit an item to chosen bots."
+msgstr "已儲存，但此伺服器無法將項目限制為所選機器人。"
+
 #: src/pages/model-settings/use-model-settings.ts
 msgid "Saved."
 msgstr "已儲存。"
@@ -6263,6 +6310,10 @@ msgstr "伺服器 URL"
 msgid "Set"
 msgstr "設定"
 
+#: src/components/VaultSettings.tsx
+msgid "Set in the bot's commands"
+msgstr "在機器人的指令中設定"
+
 #: src/components/call/CallCard.tsx
 #: src/components/SidebarFooter.tsx
 #: src/pages/MessagingSettingsPanel.tsx
@@ -6422,6 +6473,10 @@ msgstr "註冊"
 #: src/components/integrations/plugin-marketplace.tsx
 msgid "Sign-in cancelled. Try again."
 msgstr "登入已取消。請重試。"
+
+#: src/components/VaultSettings.tsx
+msgid "Signs in only on its own site"
+msgstr "只在對應網站登入"
 
 #: src/components/vault/VaultItemDetail.tsx
 #: src/components/vault/VaultItemEditor.tsx
@@ -6929,6 +6984,10 @@ msgstr "無法讀取此備份。"
 msgid "This bot"
 msgstr "此機器人"
 
+#: src/lib/user-error.ts
+msgid "This bot can't use this item. Change it in the Vault, or dismiss the request."
+msgstr "此機器人無法使用此項目。請在保管庫中變更，或關閉此請求。"
+
 #: src/pages/shell/computer-view.tsx
 msgid "This bot runs on this computer, not a Linux desktop. Shell and files use your home folder."
 msgstr "此機器人執行在這臺電腦上，而不是 Linux 桌面。Shell 和檔案使用你的主目錄。"
@@ -6987,6 +7046,14 @@ msgstr "此匯入已使用過。請重新選擇檔案。"
 #: src/pages/Invite.tsx
 msgid "This invite link is no longer valid."
 msgstr ""
+
+#: src/lib/user-error.ts
+msgid "This item is blocked for bots. Allow it in the Vault, or dismiss the request."
+msgstr "此項目已對機器人封鎖。請在保管庫中允許，或關閉此請求。"
+
+#: src/components/VaultSettings.tsx
+msgid "This limits only this Space's bots. Your other Spaces choose for their own."
+msgstr "這只限制此空間的機器人。你的其他空間會為各自的機器人選擇。"
 
 #: src/pages/HostComputerPrompt.tsx
 msgid "this Mac"
@@ -7065,6 +7132,10 @@ msgstr "此伺服器已連線。請先中斷再重新授權。"
 #: src/lib/run-error.ts
 msgid "This server's tool result does not fit the model. Turn off Keep tool results whole for that server, or choose another model."
 msgstr "此伺服器的工具結果超出模型容量。請關閉該伺服器的「保留完整工具結果」，或選擇其他模型。"
+
+#: src/components/VaultSettings.tsx
+msgid "This Space keeps its own vault, so its bots can't use account items."
+msgstr "此空間使用自己的保管庫，因此其中的機器人無法使用帳戶項目。"
 
 #: src/pages/model-settings/connection-controls.tsx
 msgid "This subscription sign-in is not available in Rakazo yet. Use a deployment credential or choose another provider."
@@ -7414,6 +7485,10 @@ msgstr "使用 Rakazo 額度"
 #: src/pages/memory-providers/HonchoSettingsForm.tsx
 msgid "Use up to 512 letters, digits, _ or -."
 msgstr "最多可使用 512 個英文字母、數字、_ 或 -。"
+
+#: src/components/vault/VaultItemActivity.tsx
+msgid "Used {when} by {bot}"
+msgstr "{bot} 於{when}使用"
 
 #: src/pages/memory-providers/HonchoSettingsForm.tsx
 msgid "User peer"

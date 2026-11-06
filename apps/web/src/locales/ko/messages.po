@@ -646,6 +646,7 @@ msgstr ""
 msgid "Active"
 msgstr "활성"
 
+#: src/components/vault/VaultItemActivity.tsx
 #: src/pages/shell/sidebar-header.tsx
 msgid "Activity"
 msgstr "활동"
@@ -781,6 +782,10 @@ msgstr "트리거 추가"
 msgid "Add workspace"
 msgstr "워크스페이스 추가"
 
+#: src/components/VaultSettings.tsx
+msgid "Add your first item"
+msgstr "첫 항목 추가"
+
 #: src/components/integrations/plugin-marketplace.tsx
 #: src/pages/PluginsOverlay.tsx
 msgid "Added"
@@ -855,6 +860,7 @@ msgid "All time"
 msgstr ""
 
 #: src/components/ApprovalRulesSettings.tsx
+#: src/components/vault/VaultItemAccess.tsx
 msgid "Allow"
 msgstr ""
 
@@ -1078,6 +1084,7 @@ msgstr "보관"
 msgid "archived"
 msgstr "보관됨"
 
+#: src/components/vault/VaultItemAccess.tsx
 #: src/pages/shell/archived-chats.tsx
 msgid "Archived"
 msgstr "보관됨"
@@ -1095,6 +1102,10 @@ msgstr ""
 msgid "Ask"
 msgstr "묻기"
 
+#: src/components/vault/VaultItemAccess.tsx
+msgid "Ask first"
+msgstr "먼저 묻기"
+
 #: src/components/ApprovalRulesSettings.tsx
 msgid "Asks before sending, spending or changing anything in your apps."
 msgstr ""
@@ -1102,6 +1113,10 @@ msgstr ""
 #: src/components/ApprovalRulesSettings.tsx
 msgid "Asks only before purchases and the first use of your computer. Only Block rules apply."
 msgstr ""
+
+#: src/components/VaultSettings.tsx
+msgid "Asks you before every payment"
+msgstr "결제할 때마다 확인"
 
 #: src/pages/shell/computer-panel.tsx
 msgid "Asleep"
@@ -1249,6 +1264,7 @@ msgid "Billing period"
 msgstr "결제 주기"
 
 #: src/components/ApprovalRulesSettings.tsx
+#: src/components/vault/VaultItemAccess.tsx
 msgid "Block"
 msgstr ""
 
@@ -1319,9 +1335,18 @@ msgstr "봇의 모델"
 msgid "Both"
 msgstr ""
 
+#: src/components/vault/VaultItemAccess.tsx
+#: src/components/vault/VaultItemDetail.tsx
+msgid "Bots"
+msgstr "봇"
+
 #: src/components/ModelCredits.tsx
 msgid "Bots and browser automation"
 msgstr ""
+
+#: src/components/VaultSettings.tsx
+msgid "Bots type saved passwords and card numbers without seeing them."
+msgstr "봇은 저장된 비밀번호와 카드 번호를 보지 않고 입력합니다."
 
 #: src/components/SharedSpaceRules.tsx
 msgid "Bots use the accounts of whoever messages them"
@@ -2349,6 +2374,7 @@ msgstr ""
 msgid "Could not load billing"
 msgstr ""
 
+#: src/components/vault/VaultItemDetail.tsx
 #: src/pages/IntegrationSetup.tsx
 msgid "Could not load bots. Reload to try again."
 msgstr ""
@@ -3482,6 +3508,10 @@ msgstr "파일 또는 폴더, 한 줄에 하나씩"
 msgid "Files your bots create, like reports, docs and images, collect here."
 msgstr ""
 
+#: src/components/VaultSettings.tsx
+msgid "Fills in a name, address or phone"
+msgstr "이름, 주소, 전화번호 입력"
+
 #: src/pages/GroupPanel.tsx
 msgid "Filter bots"
 msgstr ""
@@ -4065,6 +4095,10 @@ msgstr ""
 #: src/components/ComputerDeviceSettings.tsx
 msgid "Let bots use this computer"
 msgstr ""
+
+#: src/components/VaultSettings.tsx
+msgid "Lets a bot call a service"
+msgstr "봇이 서비스를 호출할 수 있게 함"
 
 #: src/pages/MemorySettingsOverlay.tsx
 msgid "Lets bots save and recall facts by meaning, alongside MEMORY.md."
@@ -4757,8 +4791,9 @@ msgid "No authentication"
 msgstr "인증 없음"
 
 #: src/components/integrations/agent-access.tsx
+#: src/components/vault/VaultItemDetail.tsx
 msgid "No bots"
-msgstr ""
+msgstr "봇 없음"
 
 #: src/pages/GroupPanel.tsx
 #: src/pages/shell/bot-picker.tsx
@@ -6039,6 +6074,18 @@ msgstr "저장됨"
 msgid "Saved, but list refresh failed"
 msgstr "저장했지만 목록을 새로고침하지 못했습니다."
 
+#: src/components/VaultSettings.tsx
+msgid "Saved, but this server can't ask you first."
+msgstr "저장했지만 이 서버에서는 먼저 물어볼 수 없습니다."
+
+#: src/components/VaultSettings.tsx
+msgid "Saved, but this server can't block bots yet."
+msgstr "저장했지만 이 서버에서는 아직 봇을 차단할 수 없습니다."
+
+#: src/components/VaultSettings.tsx
+msgid "Saved, but this server can't limit an item to chosen bots."
+msgstr "저장했지만 이 서버에서는 항목을 선택한 봇으로 제한할 수 없습니다."
+
 #: src/pages/model-settings/use-model-settings.ts
 msgid "Saved."
 msgstr "저장되었습니다."
@@ -6262,6 +6309,10 @@ msgstr "서버 URL"
 msgid "Set"
 msgstr "설정"
 
+#: src/components/VaultSettings.tsx
+msgid "Set in the bot's commands"
+msgstr "봇의 명령에 설정됨"
+
 #: src/components/call/CallCard.tsx
 #: src/components/SidebarFooter.tsx
 #: src/pages/MessagingSettingsPanel.tsx
@@ -6421,6 +6472,10 @@ msgstr "가입하기"
 #: src/components/integrations/plugin-marketplace.tsx
 msgid "Sign-in cancelled. Try again."
 msgstr ""
+
+#: src/components/VaultSettings.tsx
+msgid "Signs in only on its own site"
+msgstr "해당 사이트에서만 로그인"
 
 #: src/components/vault/VaultItemDetail.tsx
 #: src/components/vault/VaultItemEditor.tsx
@@ -6928,6 +6983,10 @@ msgstr "이 백업을 읽지 못했습니다."
 msgid "This bot"
 msgstr "이 봇"
 
+#: src/lib/user-error.ts
+msgid "This bot can't use this item. Change it in the Vault, or dismiss the request."
+msgstr "이 봇은 이 항목을 사용할 수 없습니다. 보관함에서 변경하거나 요청을 닫으세요."
+
 #: src/pages/shell/computer-view.tsx
 msgid "This bot runs on this computer, not a Linux desktop. Shell and files use your home folder."
 msgstr "이 Bot은 별도 Linux 화면이 아니라 현재 컴퓨터에서 실행됩니다. 터미널과 파일 작업은 홈 폴더를 사용합니다."
@@ -6986,6 +7045,14 @@ msgstr "이미 사용된 가져오기입니다. 파일을 다시 선택하세요
 #: src/pages/Invite.tsx
 msgid "This invite link is no longer valid."
 msgstr ""
+
+#: src/lib/user-error.ts
+msgid "This item is blocked for bots. Allow it in the Vault, or dismiss the request."
+msgstr "이 항목은 봇에게 차단되어 있습니다. 보관함에서 허용하거나 요청을 닫으세요."
+
+#: src/components/VaultSettings.tsx
+msgid "This limits only this Space's bots. Your other Spaces choose for their own."
+msgstr "이 설정은 이 스페이스의 봇만 제한합니다. 다른 스페이스는 각자의 봇을 선택합니다."
 
 #: src/pages/HostComputerPrompt.tsx
 msgid "this Mac"
@@ -7064,6 +7131,10 @@ msgstr "이 서버는 이미 연결되어 있습니다. 다시 인증하려면 �
 #: src/lib/run-error.ts
 msgid "This server's tool result does not fit the model. Turn off Keep tool results whole for that server, or choose another model."
 msgstr ""
+
+#: src/components/VaultSettings.tsx
+msgid "This Space keeps its own vault, so its bots can't use account items."
+msgstr "이 스페이스는 자체 보관함을 사용하므로 이곳의 봇은 계정 항목을 사용할 수 없습니다."
 
 #: src/pages/model-settings/connection-controls.tsx
 msgid "This subscription sign-in is not available in Rakazo yet. Use a deployment credential or choose another provider."
@@ -7413,6 +7484,10 @@ msgstr ""
 #: src/pages/memory-providers/HonchoSettingsForm.tsx
 msgid "Use up to 512 letters, digits, _ or -."
 msgstr ""
+
+#: src/components/vault/VaultItemActivity.tsx
+msgid "Used {when} by {bot}"
+msgstr "{when} {bot}이(가) 사용"
 
 #: src/pages/memory-providers/HonchoSettingsForm.tsx
 msgid "User peer"

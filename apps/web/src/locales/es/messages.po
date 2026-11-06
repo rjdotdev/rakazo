@@ -646,6 +646,7 @@ msgstr "Acciones del espacio"
 msgid "Active"
 msgstr "Activo"
 
+#: src/components/vault/VaultItemActivity.tsx
 #: src/pages/shell/sidebar-header.tsx
 msgid "Activity"
 msgstr "Actividad"
@@ -781,6 +782,10 @@ msgstr "Agregar disparador"
 msgid "Add workspace"
 msgstr "Añadir espacio de trabajo"
 
+#: src/components/VaultSettings.tsx
+msgid "Add your first item"
+msgstr "Añade tu primer elemento"
+
 #: src/components/integrations/plugin-marketplace.tsx
 #: src/pages/PluginsOverlay.tsx
 msgid "Added"
@@ -855,6 +860,7 @@ msgid "All time"
 msgstr "Todo el tiempo"
 
 #: src/components/ApprovalRulesSettings.tsx
+#: src/components/vault/VaultItemAccess.tsx
 msgid "Allow"
 msgstr ""
 
@@ -1078,6 +1084,7 @@ msgstr "Archivar"
 msgid "archived"
 msgstr "archivado"
 
+#: src/components/vault/VaultItemAccess.tsx
 #: src/pages/shell/archived-chats.tsx
 msgid "Archived"
 msgstr "Archivado"
@@ -1095,6 +1102,10 @@ msgstr "Artefactos"
 msgid "Ask"
 msgstr "Preguntar"
 
+#: src/components/vault/VaultItemAccess.tsx
+msgid "Ask first"
+msgstr "Preguntar antes"
+
 #: src/components/ApprovalRulesSettings.tsx
 msgid "Asks before sending, spending or changing anything in your apps."
 msgstr ""
@@ -1102,6 +1113,10 @@ msgstr ""
 #: src/components/ApprovalRulesSettings.tsx
 msgid "Asks only before purchases and the first use of your computer. Only Block rules apply."
 msgstr ""
+
+#: src/components/VaultSettings.tsx
+msgid "Asks you before every payment"
+msgstr "Te pregunta antes de cada pago"
 
 #: src/pages/shell/computer-panel.tsx
 msgid "Asleep"
@@ -1249,6 +1264,7 @@ msgid "Billing period"
 msgstr "Periodo de facturación"
 
 #: src/components/ApprovalRulesSettings.tsx
+#: src/components/vault/VaultItemAccess.tsx
 msgid "Block"
 msgstr ""
 
@@ -1319,9 +1335,18 @@ msgstr "Modelo del bot"
 msgid "Both"
 msgstr "Ambos"
 
+#: src/components/vault/VaultItemAccess.tsx
+#: src/components/vault/VaultItemDetail.tsx
+msgid "Bots"
+msgstr "Bots"
+
 #: src/components/ModelCredits.tsx
 msgid "Bots and browser automation"
 msgstr "Bots y automatización del navegador"
+
+#: src/components/VaultSettings.tsx
+msgid "Bots type saved passwords and card numbers without seeing them."
+msgstr "Los bots escriben las contraseñas y los números de tarjeta guardados sin verlos."
 
 #: src/components/SharedSpaceRules.tsx
 msgid "Bots use the accounts of whoever messages them"
@@ -2349,6 +2374,7 @@ msgstr "No se pudieron cargar los artefactos."
 msgid "Could not load billing"
 msgstr "No se pudo cargar la facturación"
 
+#: src/components/vault/VaultItemDetail.tsx
 #: src/pages/IntegrationSetup.tsx
 msgid "Could not load bots. Reload to try again."
 msgstr "No se pudieron cargar los bots. Recarga para volver a intentarlo."
@@ -3482,6 +3508,10 @@ msgstr "Archivos o carpetas, uno por línea"
 msgid "Files your bots create, like reports, docs and images, collect here."
 msgstr "Los archivos que crean tus bots, como informes, documentos e imágenes, se reúnen aquí."
 
+#: src/components/VaultSettings.tsx
+msgid "Fills in a name, address or phone"
+msgstr "Rellena un nombre, una dirección o un teléfono"
+
 #: src/pages/GroupPanel.tsx
 msgid "Filter bots"
 msgstr "Filtrar bots"
@@ -4065,6 +4095,10 @@ msgstr ""
 #: src/components/ComputerDeviceSettings.tsx
 msgid "Let bots use this computer"
 msgstr "Permitir que los bots usen esta computadora"
+
+#: src/components/VaultSettings.tsx
+msgid "Lets a bot call a service"
+msgstr "Permite que un bot llame a un servicio"
 
 #: src/pages/MemorySettingsOverlay.tsx
 msgid "Lets bots save and recall facts by meaning, alongside MEMORY.md."
@@ -4757,8 +4791,9 @@ msgid "No authentication"
 msgstr "Sin autenticación"
 
 #: src/components/integrations/agent-access.tsx
+#: src/components/vault/VaultItemDetail.tsx
 msgid "No bots"
-msgstr ""
+msgstr "Ningún bot"
 
 #: src/pages/GroupPanel.tsx
 #: src/pages/shell/bot-picker.tsx
@@ -6039,6 +6074,18 @@ msgstr "Guardado"
 msgid "Saved, but list refresh failed"
 msgstr "Guardado, pero falló la actualización de la lista"
 
+#: src/components/VaultSettings.tsx
+msgid "Saved, but this server can't ask you first."
+msgstr "Guardado, pero este servidor no puede preguntarte antes."
+
+#: src/components/VaultSettings.tsx
+msgid "Saved, but this server can't block bots yet."
+msgstr "Guardado, pero este servidor aún no puede bloquear bots."
+
+#: src/components/VaultSettings.tsx
+msgid "Saved, but this server can't limit an item to chosen bots."
+msgstr "Guardado, pero este servidor no puede limitar un elemento a los bots elegidos."
+
 #: src/pages/model-settings/use-model-settings.ts
 msgid "Saved."
 msgstr "Guardado."
@@ -6262,6 +6309,10 @@ msgstr "URL del servidor"
 msgid "Set"
 msgstr "Establecer"
 
+#: src/components/VaultSettings.tsx
+msgid "Set in the bot's commands"
+msgstr "Se define en los comandos del bot"
+
 #: src/components/call/CallCard.tsx
 #: src/components/SidebarFooter.tsx
 #: src/pages/MessagingSettingsPanel.tsx
@@ -6421,6 +6472,10 @@ msgstr "Registrarse"
 #: src/components/integrations/plugin-marketplace.tsx
 msgid "Sign-in cancelled. Try again."
 msgstr "Se canceló el inicio de sesión. Vuelve a intentarlo."
+
+#: src/components/VaultSettings.tsx
+msgid "Signs in only on its own site"
+msgstr "Inicia sesión solo en su propio sitio"
 
 #: src/components/vault/VaultItemDetail.tsx
 #: src/components/vault/VaultItemEditor.tsx
@@ -6928,6 +6983,10 @@ msgstr "No se pudo leer esta copia de seguridad."
 msgid "This bot"
 msgstr "Este bot"
 
+#: src/lib/user-error.ts
+msgid "This bot can't use this item. Change it in the Vault, or dismiss the request."
+msgstr "Este bot no puede usar este elemento. Cámbialo en la Bóveda o descarta la solicitud."
+
 #: src/pages/shell/computer-view.tsx
 msgid "This bot runs on this computer, not a Linux desktop. Shell and files use your home folder."
 msgstr "Este bot se ejecuta en esta computadora, no en un escritorio Linux. El shell y los archivos usan tu carpeta de inicio."
@@ -6986,6 +7045,14 @@ msgstr "Esta importación ya se usó. Vuelve a elegir los archivos."
 #: src/pages/Invite.tsx
 msgid "This invite link is no longer valid."
 msgstr ""
+
+#: src/lib/user-error.ts
+msgid "This item is blocked for bots. Allow it in the Vault, or dismiss the request."
+msgstr "Este elemento está bloqueado para los bots. Permítelo en la Bóveda o descarta la solicitud."
+
+#: src/components/VaultSettings.tsx
+msgid "This limits only this Space's bots. Your other Spaces choose for their own."
+msgstr "Esto solo limita los bots de este espacio. Tus otros espacios eligen para los suyos."
 
 #: src/pages/HostComputerPrompt.tsx
 msgid "this Mac"
@@ -7064,6 +7131,10 @@ msgstr "Este servidor ya está conectado. Desconéctalo primero para autorizarlo
 #: src/lib/run-error.ts
 msgid "This server's tool result does not fit the model. Turn off Keep tool results whole for that server, or choose another model."
 msgstr ""
+
+#: src/components/VaultSettings.tsx
+msgid "This Space keeps its own vault, so its bots can't use account items."
+msgstr "Este espacio tiene su propia bóveda, así que sus bots no pueden usar los elementos de la cuenta."
 
 #: src/pages/model-settings/connection-controls.tsx
 msgid "This subscription sign-in is not available in Rakazo yet. Use a deployment credential or choose another provider."
@@ -7413,6 +7484,10 @@ msgstr "Usar créditos de Rakazo"
 #: src/pages/memory-providers/HonchoSettingsForm.tsx
 msgid "Use up to 512 letters, digits, _ or -."
 msgstr "Usa hasta 512 letras, dígitos, _ o -."
+
+#: src/components/vault/VaultItemActivity.tsx
+msgid "Used {when} by {bot}"
+msgstr "Usado {when} por {bot}"
 
 #: src/pages/memory-providers/HonchoSettingsForm.tsx
 msgid "User peer"

@@ -1,5 +1,11 @@
 import { Trans, useLingui } from "@lingui/react/macro";
-import type { CardSecretValue, ContactFields, LoginFieldInput, VaultKind } from "@rakazo/contracts";
+import type {
+  CardSecretValue,
+  ContactFields,
+  LoginFieldInput,
+  VaultKind,
+  VaultPolicy,
+} from "@rakazo/contracts";
 import {
   BotSecretName,
   CardSecretValue as CardSecretValueSchema,
@@ -27,8 +33,10 @@ import {
 } from "@rakazo/ui-web";
 import type { ComponentProps, ReactNode } from "react";
 import { useId, useRef, useState } from "react";
+import type { AgentAccess } from "../integrations/agent-access";
 import type { VaultAuth } from "./kinds";
 import { LoginFieldsInput } from "./LoginFieldsInput";
+import { VaultItemAccess } from "./VaultItemAccess";
 import { VaultPageHeader } from "./VaultPageHeader";
 
 /** What the editor hands back: a destination and the value to save, in the shape vault.put takes. */
@@ -42,6 +50,9 @@ export type VaultEditorResult = {
   remember?: false;
   title?: string;
   note?: string;
+  policy?: VaultPolicy;
+  allBots?: boolean;
+  botIds?: string[];
 };
 
 /** What the form starts with: a saved item being edited, or what a chat card asks for. */
@@ -58,6 +69,10 @@ export type VaultEditorInitial = {
   replacedSite?: string;
   card?: CardSecretValue;
   contact?: ContactFields;
+  policy?: VaultPolicy;
+  /** Left out by a server that can't limit an item to chosen bots. */
+  access?: AgentAccess;
+  botsNote?: string;
 };
 
 /** A saved contact a card can bill to. */
@@ -203,6 +218,8 @@ function EditorForm({
   const [title, setTitle] = useState(initial?.title ?? "");
   const [note, setNote] = useState(initial?.note ?? "");
   const [noteShown, setNoteShown] = useState(Boolean(initial?.note));
+  const [policy, setPolicy] = useState(initial?.policy ?? "allow");
+  const [access, setAccess] = useState(initial?.access);
   const [origin, setOrigin] = useState(initial?.origin ?? "");
   const defaultLogin = (): LoginFieldInput[] =>
     initial?.loginFields?.map((field) => ({ ...field, value: asking ? "" : field.value })) ?? [
@@ -295,6 +312,8 @@ function EditorForm({
       : {
           ...(titleChanged ? { title: title.trim() } : {}),
           ...(noteShown || editing ? { note: note.trim() } : {}),
+          ...(policy !== (initial?.policy ?? "allow") ? { policy } : {}),
+          ...(access && access !== initial?.access ? access : {}),
         };
     const name = initial?.name;
     if (kind === "login") {
@@ -606,6 +625,17 @@ function EditorForm({
           {protectedValue(t`Value`, editing ? "••••••••" : undefined)}
         </>
       ) : null}
+      {asking ? null : (
+        <VaultItemAccess
+          kind={kind}
+          policy={policy}
+          access={access}
+          note={initial?.botsNote}
+          disabled={busy}
+          onChange={setPolicy}
+          onAccessChange={setAccess}
+        />
+      )}
       {asking ? null : noteShown ? (
         text("note", t`When to use`, note, setNote, { maxLength: 200 })
       ) : (

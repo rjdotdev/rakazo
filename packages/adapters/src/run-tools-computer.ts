@@ -45,7 +45,7 @@ import { nativeShellCommandArgv, usesNativeShell } from "./native-shell.js";
 import { purchaseApprovalOf } from "./purchase-gate.js";
 import { resolvePurchaseCardFill, resolvePurchasePayTokenFill } from "./purchase-service.js";
 import type { RunContext } from "./run-context.js";
-import { addRunSecrets } from "./run-context.js";
+import { addRunSecrets, recordVaultUse } from "./run-context.js";
 import { builtinOffered } from "./run-instructions.js";
 import { computerScreenToolResult } from "./run-lifecycle.js";
 import type { ToolCall, ToolHandlers } from "./run-tool-gate.js";
@@ -58,7 +58,7 @@ import {
 import { recordPagePayment } from "./spending-gate.js";
 import { DESKTOP_HELD_FOR_TAKEOVER_MESSAGE } from "./takeover-resume.js";
 import { getActiveTeachingSession } from "./teaching-session.js";
-import { vaultCardUseOf } from "./vault-card-use.js";
+import { vaultCardUseOf, vaultLoginUseOf } from "./vault-card-use.js";
 
 function appendComputerCommand(ctx: RunContext, payload: ComputerCommand) {
   const { deps, run, runId, bot, thread } = ctx;
@@ -243,9 +243,11 @@ export async function pageBrowserTool(ctx: RunContext, call: ToolCall) {
                 runId: run.id,
                 name: step.secret,
                 field: step.field,
+                approval: vaultLoginUseOf(args.loginApproval),
               });
               if ("error" in resolved) return resolved;
               addRunSecrets(ctx, resolved.redactions);
+              if (resolved.used) await recordVaultUse(ctx, name, resolved.used, resolved.origin);
               return { text: resolved.text, origin: resolved.origin, hidden: resolved.hidden };
             },
             resolveCardFill: async (step) => {
@@ -265,6 +267,7 @@ export async function pageBrowserTool(ctx: RunContext, call: ToolCall) {
                 });
                 if ("error" in resolved) return resolved;
                 addRunSecrets(ctx, resolved.redactions);
+                await recordVaultUse(ctx, name, resolved.used, resolved.origin);
                 // No pass for the pay click: approving the card named no amount, so the click
                 // that places the order still asks, showing what the page charges.
                 return { text: resolved.text, origin: resolved.origin };

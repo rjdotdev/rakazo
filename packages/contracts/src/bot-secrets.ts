@@ -739,6 +739,11 @@ export const VaultItemTitle = z.string().trim().max(80);
 /** When the bot should use an item, such as "For travel". */
 export const VaultItemNote = z.string().trim().max(200);
 
+// A blocked item's value is still hidden in every run; a saved card still asks before each use.
+// "ask" is for a website login: each browser_act call that signs in with it asks the user first.
+export const VaultPolicy = z.enum(["allow", "off", "ask"]);
+export type VaultPolicy = z.infer<typeof VaultPolicy>;
+
 /**
  * An item the owner saves in a vault: the account's or, with scope "space", the Space's. Without a
  * name it is a new item, named from its title. With the name of a saved item, `value` may be left
@@ -751,6 +756,10 @@ export const VaultPutInput = settingsScopeInput.extend({
   value: BotSecretPutInput.shape.value.optional(),
   title: VaultItemTitle.optional(),
   note: VaultItemNote.optional(),
+  policy: VaultPolicy.optional(),
+  /** False limits the item to `botIds`, the owner's bots chosen in this Space. */
+  allBots: z.boolean().optional(),
+  botIds: z.array(Id).max(100).optional(),
 });
 export type VaultPutInput = z.infer<typeof VaultPutInput>;
 
@@ -768,6 +777,16 @@ export const VaultRevealed = z.union([
   z.object({ value: z.string() }),
 ]);
 export type VaultRevealed = z.infer<typeof VaultRevealed>;
+
+export const VAULT_ACTIVITY_LIMIT = 20;
+
+export const VaultUse = z.strictObject({
+  at: z.string(),
+  botName: z.string().max(200),
+  site: z.string().max(2048).nullable(),
+  chat: z.strictObject({ title: z.string() }).nullable(),
+});
+export type VaultUse = z.infer<typeof VaultUse>;
 
 /** What anyone who may see the item sees of a card: never the number or security code. */
 export const CardSummary = z.object({
@@ -804,10 +823,23 @@ export const BotSecretMetadata = z.object({
   title: z.string().default(""),
   note: z.string().default(""),
   preview: VaultPreview.optional(),
+  /** Missing from an older server, which means "allow". */
+  policy: VaultPolicy.optional(),
+  /** Both missing from an older server, which lets every bot use every item. */
+  allBots: z.boolean().optional(),
+  /** The bots chosen in this Space. */
+  botIds: z.array(z.string()).optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
 export type BotSecretMetadata = z.infer<typeof BotSecretMetadata>;
+
+// Fixed text, so apps can show it translated: an answer's other errors could echo the value.
+export const BLOCKED_ITEM_ANSWER =
+  "This item is blocked for bots. Allow it in the Vault, or dismiss the request.";
+/** As BLOCKED_ITEM_ANSWER, for an item allowed but limited to other bots. */
+export const UNCHOSEN_ITEM_ANSWER =
+  "This bot can't use this item. Change it in the Vault, or dismiss the request.";
 
 export const SecretHttpRequest = z
   .object({

@@ -28,6 +28,8 @@ export {
   revealBotSecret,
   SPACE_VAULT_NOT_IN_USE,
   storeBotSecret,
+  UNKNOWN_BOTS,
+  UNSUPPORTED_ACCESS,
 } from "./bot-secrets.js";
 export * from "./browser-emulator.js";
 export * from "./browser-provider-factory.js";
@@ -205,6 +207,7 @@ export { dispatcherFetch } from "./undici-fetch.js";
 export * from "./user-device-emulator.js";
 export * from "./user-device-gateway.js";
 export * from "./user-device-protocol.js";
+export { listVaultItemUses } from "./vault-activity.js";
 export * from "./voice-factory.js";
 export * from "./wakeup.js";
 export * from "./web-limits.js";

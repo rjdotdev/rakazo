@@ -9,6 +9,16 @@ export const ZH_TW_MESSAGES: Record<string, string> = {
   "Asks before sending, spending or changing anything in your apps.":
     "在你的應用程式中傳送、花費或變更任何東西之前先詢問。",
   Haptics: "觸覺回饋",
+  "Logins, cards and details your bots can use for you.":
+    "機器人可以代你使用的登入資訊、卡片和資料。",
+  "Add your first item": "新增第一個項目",
+  "Bots type saved passwords and card numbers without seeing them.":
+    "機器人會輸入已儲存的密碼和卡號，但看不到它們。",
+  "Signs in only on its own site": "只在對應網站登入",
+  "Asks you before every payment": "每次付款前都會詢問你",
+  "Fills in a name, address or phone": "填寫姓名、地址或電話",
+  "Lets a bot call a service": "讓機器人呼叫某個服務",
+  "Set in the bot's commands": "在機器人的指令中設定",
   "Add rule": "新增規則",
   "Tool name": "工具名稱",
   Address: "地址",
@@ -37,7 +47,6 @@ export const ZH_TW_MESSAGES: Record<string, string> = {
   Logins: "登入資訊",
   "Name on card": "持卡人姓名",
   "New item": "新項目",
-  "Nothing saved yet.": "尚未儲存任何內容。",
   Phone: "電話",
   "Security code": "安全碼",
   "State or region": "州或地區",
@@ -1490,6 +1499,23 @@ export const ZH_TW_MESSAGES: Record<string, string> = {
   "Read from the page, not checked": "讀取自頁面，未核實",
   Total: "合計",
   "{name} options": "{name}的選項",
+  "Used {when} by {bot}": "{bot} 於{when}使用",
+  Bots: "機器人",
+  "Saved, but this server can't block bots yet.": "已儲存，但此伺服器尚無法封鎖機器人。",
+  "Chosen bots": "所選機器人",
+  "This item is blocked for bots. Allow it in the Vault, or dismiss the request.":
+    "此項目已對機器人封鎖。請在保險庫中允許，或關閉此請求。",
+  "No bots": "沒有機器人",
+  "This limits only this Space's bots. Your other Spaces choose for their own.":
+    "這只限制此空間的機器人。你的其他空間會為各自的機器人選擇。",
+  "This Space keeps its own vault, so its bots can't use account items.":
+    "此空間使用自己的保管庫，因此其中的機器人無法使用帳戶項目。",
+  "Ask first": "先詢問",
+  "Saved, but this server can't ask you first.": "已儲存，但此伺服器無法先詢問你。",
+  "Saved, but this server can't limit an item to chosen bots.":
+    "已儲存，但此伺服器無法將項目限制為所選機器人。",
+  "This bot can't use this item. Change it in the Vault, or dismiss the request.":
+    "此機器人無法使用此項目。請在保險庫中變更，或關閉此請求。",
 };
 
 export const PEER_MESSAGE_FORMS = { other: "與{peer}的 {count} 則訊息" };

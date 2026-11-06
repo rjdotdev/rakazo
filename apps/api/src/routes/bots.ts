@@ -10,6 +10,7 @@ import {
   hasActiveComputerControl,
   isSecretAlreadySaved,
   listVaultItems,
+  listVaultItemUses,
   newVaultItemName,
   normalizeSecretDestination,
   pageUrlOrigin,
@@ -19,6 +20,8 @@ import {
   stopCancelledGroupRuns,
   storeBotSecret,
   toComputerRef,
+  UNKNOWN_BOTS,
+  UNSUPPORTED_ACCESS,
   validateBotModelChange,
 } from "@rakazo/adapters";
 import type {
@@ -28,7 +31,13 @@ import type {
   SettingsScope,
   VaultPutInput,
 } from "@rakazo/contracts";
-import { BotSecretAuth, resolveBotAvatarSet } from "@rakazo/contracts";
+import {
+  BLOCKED_ITEM_ANSWER,
+  BotSecretAuth,
+  resolveBotAvatarSet,
+  UNCHOSEN_ITEM_ANSWER,
+  VaultPolicy,
+} from "@rakazo/contracts";
 import { ACTIVE_RUN_STATUSES, displayName } from "@rakazo/core";
 import type { Prisma } from "@rakazo/db";
 import {
@@ -81,6 +90,8 @@ const BOT_SECRET_INPUT_ERRORS = [
   "Invalid card",
   "Invalid contact",
   SPACE_VAULT_NOT_IN_USE,
+  BLOCKED_ITEM_ANSWER,
+  UNCHOSEN_ITEM_ANSWER,
 ];
 
 /** A credential the user typed that cannot be stored, as a bad request. Never echoes the value. */
@@ -97,6 +108,11 @@ export function mapBotSecretInputError(error: unknown): unknown {
 /** Map credential validation failures to a bad request without echoing the submitted value. */
 function mapBotSecretStoreError(error: unknown): unknown {
   if (error instanceof ORPCError) return error;
+  if (
+    error instanceof Error &&
+    (error.message === UNSUPPORTED_ACCESS || error.message === UNKNOWN_BOTS)
+  )
+    return new ORPCError("BAD_REQUEST", { message: error.message });
   const mapped = mapBotSecretInputError(error);
   if (mapped !== error) return mapped;
   // Login decoding failures: a JSON parse message can quote the submitted value, so never forward it.
@@ -119,13 +135,17 @@ function vaultScope(actor: Actor, vault?: SettingsScope) {
 async function saveVaultCredential(
   deps: RouterDeps,
   scope: ReturnType<typeof vaultScope>,
-  input: Pick<VaultPutInput, "destination" | "value" | "title" | "note">,
+  input: Pick<
+    VaultPutInput,
+    "destination" | "value" | "title" | "note" | "policy" | "allBots" | "botIds"
+  >,
 ) {
   const { name } = input.destination;
+  const bots = { allBots: input.allBots, botIds: input.botIds };
   if (input.value === undefined) {
     if (!name) throw new ORPCError("BAD_REQUEST", { message: "A new item needs its value" });
     try {
-      const labels = { title: input.title, note: input.note };
+      const labels = { title: input.title, note: input.note, policy: input.policy, bots };
       if (!(await relabelVaultItem(deps.prisma, scope, name, labels))) {
         throw new ORPCError("NOT_FOUND", { message: "Credential not found" });
       }
@@ -147,6 +167,8 @@ async function saveVaultCredential(
       plaintext: value,
       title: input.title,
       note: input.note,
+      policy: input.policy,
+      bots,
       createOnly,
     });
   try {
@@ -184,6 +206,7 @@ async function vaultItemDto(
 function botSecretMetadataDto(
   row: Awaited<ReturnType<typeof listVaultItems>>[number],
 ): BotSecretMetadata {
+  const policy = VaultPolicy.catch("allow").parse(row.policy);
   // Unreadable or no-longer-storable destinations become auth:null so the owner UI stays remove-only.
   const parsed = BotSecretAuth.safeParse(row.auth);
   let auth: BotSecretMetadata["auth"] = null;
@@ -202,6 +225,9 @@ function botSecretMetadataDto(
     title: row.title,
     note: row.note,
     ...(row.preview ? { preview: row.preview } : {}),
+    policy,
+    allBots: row.allBots,
+    botIds: row.botIds,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -821,7 +847,7 @@ export function botsRoutes(ctx: RouterContext) {
           deps.secrets,
           vaultScope(context.actor, input?.scope),
         );
-        return rows.map(botSecretMetadataDto);
+        return rows.map((row) => botSecretMetadataDto(row));
       }),
       put: authed.vault.put.handler(({ context, input }) =>
         saveVaultCredential(deps, vaultScope(context.actor, input.scope), input),
@@ -850,6 +876,15 @@ export function botsRoutes(ctx: RouterContext) {
         });
         return revealed;
       }),
+      activity: authed.vault.activity.handler(async ({ context, input }) => {
+        const uses = await listVaultItemUses(
+          deps.prisma,
+          vaultScope(context.actor, input.scope),
+          input.name,
+        );
+        if (!uses) throw new ORPCError("NOT_FOUND", { message: "Credential not found" });
+        return uses;
+      }),
       remove: authed.vault.remove.handler(async ({ context, input }) => {
         await forgetBotSecret(deps.prisma, vaultScope(context.actor, input.scope), input.name);
         return { ok: true as const };
@@ -859,7 +894,7 @@ export function botsRoutes(ctx: RouterContext) {
       list: authed.botSecrets.list.handler(async ({ context, input }) => {
         await repos.getBot(context.actor, input.botId);
         const rows = await listVaultItems(deps.prisma, deps.secrets, vaultScope(context.actor));
-        return rows.map(botSecretMetadataDto);
+        return rows.map((row) => botSecretMetadataDto(row));
       }),
       put: authed.botSecrets.put.handler(async ({ context, input }) => {
         await repos.getBot(context.actor, input.botId);

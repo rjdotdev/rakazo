@@ -68,6 +68,42 @@ describe("recordAuditEvent", () => {
     ]);
   });
 
+  it("gives a person's own event to the space's organization for its members, and a guest's own", async () => {
+    // space-1 belongs to org-1; a guest's own organization is org-own.
+    const roles: Record<string, string | undefined> = { owner: "owner", guest: "guest" };
+    Object.assign(store.member, {
+      findUnique: vi.fn(
+        async ({ where }: { where: { organizationId_userId: { userId: string } } }) => {
+          const role = roles[where.organizationId_userId.userId];
+          return role ? { role } : null;
+        },
+      ),
+      findMany: vi.fn(async () => [{ organizationId: "org-own", role: "owner" }]),
+    });
+    const use = (userId: string) =>
+      recordAuditEvent({
+        action: "credential.used",
+        actor: { type: "bot", id: "bot-1", label: "Researcher" },
+        spaceId: "space-1",
+        userId,
+        target: { type: "vault_credential", id: "item-1", label: "chase-personal" },
+        metadata: { name: "chase-personal", site: "https://bank.example.test" },
+      });
+    await use("owner");
+    await use("guest");
+    // A guest whose membership is gone mid-write never lands in the space's organization.
+    await use("departed");
+    expect(store.rows.map((row) => row.organizationId)).toEqual(["org-1", "org-own", "org-own"]);
+    // With no organization of their own either, the event is dropped, and the log names nothing.
+    store.member.findMany.mockResolvedValue([]);
+    await use("departed");
+    expect(store.rows).toHaveLength(3);
+    const warned = JSON.stringify(sink.events.filter((event) => event.level === "warn"));
+    expect(warned).toContain("credential.used");
+    expect(warned).not.toContain("chase-personal");
+    expect(warned).not.toContain("bank.example.test");
+  });
+
   it("records a user's caller and gives an account-wide event to each of their organizations", async () => {
     await withSecurityRequest({ ip: "203.0.113.5", userAgent: "Mozilla/5.0" }, () =>
       recordAuditEvent({ action: "auth.sign_in", actor: { type: "user", id: "user-1" } }),

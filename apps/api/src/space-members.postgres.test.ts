@@ -407,6 +407,21 @@ describePostgres("shared spaces: invites and membership (PostgreSQL)", () => {
       },
     });
     await system.notificationPreference.create({ data: { spaceId: home, userId: invitee.id } });
+    // An item of their account vault limited here to a bot; the item stays theirs.
+    const item = await system.vaultCredential.create({
+      data: {
+        id: randomUUID(),
+        userId: invitee.id,
+        spaceId: null,
+        name: "pantry-api",
+        origin: "https://pantry.example.test",
+        auth: { type: "bearer" },
+        ciphertext: "fake-ciphertext",
+      },
+    });
+    const limited = { credentialId: item.id, spaceId: home, userId: invitee.id };
+    await system.vaultCredentialLimit.create({ data: limited });
+    await system.vaultCredentialBot.create({ data: { ...limited, botId: bot.id } });
     // Their own Space is not touched.
     const ownConnection = await system.connection.create({
       data: {
@@ -477,6 +492,12 @@ describePostgres("shared spaces: invites and membership (PostgreSQL)", () => {
     await expect(system.mcpServer.count({ where: leftover })).resolves.toBe(0);
     await expect(system.botMcpServer.count({ where: leftover })).resolves.toBe(0);
     await expect(system.notificationPreference.count({ where: leftover })).resolves.toBe(0);
+    // Their choice of bots here goes, so rejoining starts from every bot again.
+    await expect(system.vaultCredentialLimit.count({ where: leftover })).resolves.toBe(0);
+    await expect(system.vaultCredentialBot.count({ where: leftover })).resolves.toBe(0);
+    await expect(
+      system.vaultCredential.findUnique({ where: { id: item.id } }),
+    ).resolves.not.toBeNull();
     await expect(
       system.actionApprovalRule.count({ where: { spaceId: home, createdByUserId: invitee.id } }),
     ).resolves.toBe(0);

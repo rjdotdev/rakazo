@@ -600,6 +600,9 @@ async function departSpace(
           await tx.mcpServerSpace.deleteMany({ where: own });
           await tx.capabilityInstallSpace.deleteMany({ where: own });
           await tx.agentSkillSpace.deleteMany({ where: own });
+          // Their choice of bots here for their account vault's items, so rejoining starts afresh.
+          await tx.vaultCredentialLimit.deleteMany({ where: own });
+          await tx.vaultCredentialBot.deleteMany({ where: own });
           await tx.mcpOAuthSession.deleteMany({ where: own });
           await tx.modelOAuthSession.deleteMany({ where: own });
           await tx.connection.deleteMany({ where: own });

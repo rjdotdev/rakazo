@@ -1,8 +1,10 @@
 import { t } from "@lingui/core/macro";
 import {
+  BLOCKED_ITEM_ANSWER,
   CONNECTOR_AUTH_UNAVAILABLE,
   isVoiceAccountErrorCode,
   MCP_OAUTH_CLIENT_REQUIRED,
+  UNCHOSEN_ITEM_ANSWER,
 } from "@rakazo/contracts";
 import type { CredentialField } from "@rakazo/core";
 import {
@@ -36,6 +38,16 @@ export function errorText(error: unknown, fallback = t`Something went wrong. Try
     voiceAccountErrorText(error) ??
     userErrorMessage(error, { fallback, offline: t`Could not reach the server` })
   );
+}
+
+// A secret answer's server error could echo the value, so only the known fixed one is shown.
+export function secretAnswerErrorText(error: unknown, fallback: string): string {
+  const message = error && typeof error === "object" && "message" in error ? error.message : "";
+  if (message === BLOCKED_ITEM_ANSWER)
+    return t`This item is blocked for bots. Allow it in the Vault, or dismiss the request.`;
+  return message === UNCHOSEN_ITEM_ANSWER
+    ? t`This bot can't use this item. Change it in the Vault, or dismiss the request.`
+    : fallback;
 }
 
 /** Text for an RPC error or `/api/voice` body whose code says the voice account needs attention. */

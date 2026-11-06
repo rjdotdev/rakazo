@@ -2,6 +2,7 @@ import type { BotSecretDestination } from "@rakazo/contracts";
 import { BOT_SECRET_ORIGIN_MISSING_MESSAGE, encodeLoginSecret } from "@rakazo/contracts";
 import { redactSecrets } from "@rakazo/core";
 import type { PrismaClient } from "@rakazo/db";
+import { installAuditEventStore } from "@rakazo/db";
 import * as Logging from "@rakazo/logging";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -25,10 +26,12 @@ import {
   storeBotSecret,
 } from "./bot-secrets.js";
 import { fakeDatabase } from "./bot-secrets.test-support.js";
+import { secretTools } from "./run-tools-secrets.js";
 import { EncryptedSecretStore } from "./secrets.js";
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  installAuditEventStore(undefined);
 });
 
 const scope = { userId: "user-1", spaceId: "space-1" };
@@ -80,6 +83,115 @@ async function fixture(auth = destination.auth) {
 }
 
 describe("authenticated secret requests", () => {
+  it("records when the vault gives the run a saved key, once per attempt", async () => {
+    const { input, fetch } = await fixture();
+    const rows: Array<Record<string, unknown>> = [];
+    installAuditEventStore({
+      auditEvent: { createMany: async ({ data }: { data: typeof rows }) => rows.push(...data) },
+      space: { findUnique: async () => ({ organizationId: "org-1", name: "Home" }) },
+      member: { findUnique: async () => ({ role: "owner" }) },
+    } as never);
+    const ctx = {
+      deps: { prisma: input.prisma, secretStore, secretHttp: input.remote },
+      run: { ...scope, id: "run-1" },
+      runId: "run-1",
+      bot: { id: "bot-1", name: "Research bot" },
+      thread: { id: "thread-1" },
+      context: { signal: input.signal },
+      secrets: [] as string[],
+      state: {
+        vaultUses: new Set<string>(),
+        reply: { pendingProgress: "", redactor: { finish: () => "" } },
+      },
+    };
+    const send = (url = `${destination.origin}/v1/items`) =>
+      secretTools.secret_request!(
+        ctx as never,
+        {
+          name: "secret_request",
+          args: { name: destination.name, url },
+          finish: async (result: unknown) => result,
+        } as never,
+      );
+    // Another site never gets the key.
+    expect(await send("https://other.example.test/v1/items")).toHaveProperty("error");
+    expect(rows).toEqual([]);
+    // The run got the key, even though its site's address was then refused.
+    const { resolveHostname } = input.remote;
+    input.remote.resolveHostname = async () => [{ address: "169.254.169.254", family: 4 }];
+    expect(await send()).toHaveProperty("error");
+    input.remote.resolveHostname = resolveHostname;
+    expect(rows).toHaveLength(1);
+    // A second request in the attempt isn't recorded again; a new attempt is.
+    expect(await send()).toMatchObject({ status: 200 });
+    ctx.state.vaultUses.clear();
+    await send();
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(rows).toEqual(
+      [1, 2].map(() =>
+        expect.objectContaining({
+          action: "credential.used",
+          actorType: "bot",
+          actorId: "bot-1",
+          targetType: "vault_credential",
+          targetId: "secret-1",
+          targetLabel: destination.name,
+          runId: "run-1",
+          threadId: "thread-1",
+          metadata: {
+            tool: "secret_request",
+            scope: "space",
+            name: destination.name,
+            kind: "bearer",
+            site: destination.origin,
+          },
+        }),
+      ),
+    );
+    expect(JSON.stringify(rows)).not.toContain(secret);
+  });
+
+  it("records a use in the Space's organization for its members, and in a guest's own", async () => {
+    const { input } = await fixture();
+    const rows: Array<Record<string, unknown>> = [];
+    // space-1 belongs to org-1. The run's person is first its owner, then a guest of a shared
+    // Space whose own organization is org-2.
+    let role = "owner";
+    installAuditEventStore({
+      auditEvent: { createMany: async ({ data }: { data: typeof rows }) => rows.push(...data) },
+      space: { findUnique: async () => ({ organizationId: "org-1", name: "Home" }) },
+      member: {
+        findUnique: async () => ({ role }),
+        findMany: async () => [{ organizationId: "org-2", role: "owner" }],
+      },
+    } as never);
+    for (const as of ["owner", "guest"]) {
+      role = as;
+      const ctx = {
+        deps: { prisma: input.prisma, secretStore, secretHttp: input.remote },
+        run: { ...scope, id: "run-1" },
+        runId: "run-1",
+        bot: { id: "bot-1", name: "Research bot" },
+        thread: { id: "thread-1" },
+        context: { signal: input.signal },
+        secrets: [] as string[],
+        state: {
+          vaultUses: new Set<string>(),
+          reply: { pendingProgress: "", redactor: { finish: () => "" } },
+        },
+      };
+      await secretTools.secret_request!(
+        ctx as never,
+        {
+          name: "secret_request",
+          args: { name: destination.name, url: `${destination.origin}/v1/items` },
+          finish: async (result: unknown) => result,
+        } as never,
+      );
+    }
+    expect(rows.map((row) => row.organizationId)).toEqual(["org-1", "org-2"]);
+  });
+
   it("starts the request deadline before loading the credential", async () => {
     const { input, fetch } = await fixture();
     const timeout = vi.spyOn(AbortSignal, "timeout");
@@ -938,8 +1050,8 @@ describe("saved website logins", () => {
     }
   });
 
-  it("decrypts nothing for a bot without saved logins", async () => {
-    const { prisma } = await loginFixture("fake-user@example.test", { type: "bearer" });
+  it("decrypts nothing for a bot with only command variables", async () => {
+    const { prisma } = await loginFixture("fake-user@example.test", { type: "command" }, "");
     const load = vi.spyOn(secretStore, "load");
     try {
       expect(await loadLoginPasswordRedactions(prisma, secretStore, scope)).toEqual([]);
@@ -957,6 +1069,7 @@ describe("saved website logins", () => {
       hidden: true,
       origin: "https://login.example.test",
       redactions: expect.arrayContaining(["fake-password-1", "fake-user@example.test"]),
+      used: expect.objectContaining({ name: "site_login", kind: "login" }),
     });
     expect(await resolveLoginFill({ runId: "run-1", ...input, field: "username" })).toMatchObject({
       text: "fake-user@example.test",

@@ -646,6 +646,7 @@ msgstr "スペースの操作"
 msgid "Active"
 msgstr "有効"
 
+#: src/components/vault/VaultItemActivity.tsx
 #: src/pages/shell/sidebar-header.tsx
 msgid "Activity"
 msgstr "アクティビティ"
@@ -781,6 +782,10 @@ msgstr "トリガーを追加"
 msgid "Add workspace"
 msgstr "ワークスペースを追加"
 
+#: src/components/VaultSettings.tsx
+msgid "Add your first item"
+msgstr "最初の項目を追加"
+
 #: src/components/integrations/plugin-marketplace.tsx
 #: src/pages/PluginsOverlay.tsx
 msgid "Added"
@@ -855,6 +860,7 @@ msgid "All time"
 msgstr "全期間"
 
 #: src/components/ApprovalRulesSettings.tsx
+#: src/components/vault/VaultItemAccess.tsx
 msgid "Allow"
 msgstr ""
 
@@ -1078,6 +1084,7 @@ msgstr "アーカイブ"
 msgid "archived"
 msgstr "アーカイブ済み"
 
+#: src/components/vault/VaultItemAccess.tsx
 #: src/pages/shell/archived-chats.tsx
 msgid "Archived"
 msgstr "アーカイブ済み"
@@ -1095,6 +1102,10 @@ msgstr "成果物"
 msgid "Ask"
 msgstr "確認"
 
+#: src/components/vault/VaultItemAccess.tsx
+msgid "Ask first"
+msgstr "先に確認"
+
 #: src/components/ApprovalRulesSettings.tsx
 msgid "Asks before sending, spending or changing anything in your apps."
 msgstr ""
@@ -1102,6 +1113,10 @@ msgstr ""
 #: src/components/ApprovalRulesSettings.tsx
 msgid "Asks only before purchases and the first use of your computer. Only Block rules apply."
 msgstr ""
+
+#: src/components/VaultSettings.tsx
+msgid "Asks you before every payment"
+msgstr "支払いのたびに確認"
 
 #: src/pages/shell/computer-panel.tsx
 msgid "Asleep"
@@ -1249,6 +1264,7 @@ msgid "Billing period"
 msgstr "請求期間"
 
 #: src/components/ApprovalRulesSettings.tsx
+#: src/components/vault/VaultItemAccess.tsx
 msgid "Block"
 msgstr ""
 
@@ -1319,9 +1335,18 @@ msgstr "ボットのモデル"
 msgid "Both"
 msgstr "両方"
 
+#: src/components/vault/VaultItemAccess.tsx
+#: src/components/vault/VaultItemDetail.tsx
+msgid "Bots"
+msgstr "ボット"
+
 #: src/components/ModelCredits.tsx
 msgid "Bots and browser automation"
 msgstr "ボットとブラウザ自動化"
+
+#: src/components/VaultSettings.tsx
+msgid "Bots type saved passwords and card numbers without seeing them."
+msgstr "ボットは保存されたパスワードやカード番号を見ずに入力します。"
 
 #: src/components/SharedSpaceRules.tsx
 msgid "Bots use the accounts of whoever messages them"
@@ -2349,6 +2374,7 @@ msgstr "アーティファクトを読み込めませんでした。"
 msgid "Could not load billing"
 msgstr "請求情報を読み込めませんでした"
 
+#: src/components/vault/VaultItemDetail.tsx
 #: src/pages/IntegrationSetup.tsx
 msgid "Could not load bots. Reload to try again."
 msgstr "ボットを読み込めませんでした。再読み込みしてもう一度お試しください。"
@@ -3482,6 +3508,10 @@ msgstr "ファイルまたはフォルダ（1行に1つ）"
 msgid "Files your bots create, like reports, docs and images, collect here."
 msgstr "ボットが作成したレポート、ドキュメント、画像などのファイルがここに集まります。"
 
+#: src/components/VaultSettings.tsx
+msgid "Fills in a name, address or phone"
+msgstr "名前、住所、電話番号を入力"
+
 #: src/pages/GroupPanel.tsx
 msgid "Filter bots"
 msgstr "ボットを絞り込む"
@@ -4065,6 +4095,10 @@ msgstr ""
 #: src/components/ComputerDeviceSettings.tsx
 msgid "Let bots use this computer"
 msgstr ""
+
+#: src/components/VaultSettings.tsx
+msgid "Lets a bot call a service"
+msgstr "ボットがサービスを呼び出せるようにする"
 
 #: src/pages/MemorySettingsOverlay.tsx
 msgid "Lets bots save and recall facts by meaning, alongside MEMORY.md."
@@ -4757,8 +4791,9 @@ msgid "No authentication"
 msgstr "認証なし"
 
 #: src/components/integrations/agent-access.tsx
+#: src/components/vault/VaultItemDetail.tsx
 msgid "No bots"
-msgstr ""
+msgstr "ボットなし"
 
 #: src/pages/GroupPanel.tsx
 #: src/pages/shell/bot-picker.tsx
@@ -6039,6 +6074,18 @@ msgstr "保存しました"
 msgid "Saved, but list refresh failed"
 msgstr "保存しましたが、一覧を更新できませんでした"
 
+#: src/components/VaultSettings.tsx
+msgid "Saved, but this server can't ask you first."
+msgstr "保存しましたが、このサーバーでは先に確認できません。"
+
+#: src/components/VaultSettings.tsx
+msgid "Saved, but this server can't block bots yet."
+msgstr "保存しましたが、このサーバーではまだボットをブロックできません。"
+
+#: src/components/VaultSettings.tsx
+msgid "Saved, but this server can't limit an item to chosen bots."
+msgstr "保存しましたが、このサーバーでは項目を選んだボットだけに限定できません。"
+
 #: src/pages/model-settings/use-model-settings.ts
 msgid "Saved."
 msgstr "保存しました。"
@@ -6262,6 +6309,10 @@ msgstr "サーバーURL"
 msgid "Set"
 msgstr "設定"
 
+#: src/components/VaultSettings.tsx
+msgid "Set in the bot's commands"
+msgstr "ボットのコマンドで設定"
+
 #: src/components/call/CallCard.tsx
 #: src/components/SidebarFooter.tsx
 #: src/pages/MessagingSettingsPanel.tsx
@@ -6421,6 +6472,10 @@ msgstr "新規登録"
 #: src/components/integrations/plugin-marketplace.tsx
 msgid "Sign-in cancelled. Try again."
 msgstr ""
+
+#: src/components/VaultSettings.tsx
+msgid "Signs in only on its own site"
+msgstr "自分のサイトでのみサインイン"
 
 #: src/components/vault/VaultItemDetail.tsx
 #: src/components/vault/VaultItemEditor.tsx
@@ -6928,6 +6983,10 @@ msgstr "このバックアップを読み込めませんでした。"
 msgid "This bot"
 msgstr "このボット"
 
+#: src/lib/user-error.ts
+msgid "This bot can't use this item. Change it in the Vault, or dismiss the request."
+msgstr "このボットはこの項目を使えません。保管庫で変更するか、リクエストを閉じてください。"
+
 #: src/pages/shell/computer-view.tsx
 msgid "This bot runs on this computer, not a Linux desktop. Shell and files use your home folder."
 msgstr "このボットはLinuxデスクトップではなく、このコンピューター上で動作します。シェルとファイルはホームフォルダーを使用します。"
@@ -6986,6 +7045,14 @@ msgstr "このインポートはすでに使用されています。もう一度
 #: src/pages/Invite.tsx
 msgid "This invite link is no longer valid."
 msgstr ""
+
+#: src/lib/user-error.ts
+msgid "This item is blocked for bots. Allow it in the Vault, or dismiss the request."
+msgstr "この項目はボットに対してブロックされています。保管庫で許可するか、リクエストを閉じてください。"
+
+#: src/components/VaultSettings.tsx
+msgid "This limits only this Space's bots. Your other Spaces choose for their own."
+msgstr "これはこのスペースのボットだけを制限します。ほかのスペースはそれぞれのボットについて選びます。"
 
 #: src/pages/HostComputerPrompt.tsx
 msgid "this Mac"
@@ -7064,6 +7131,10 @@ msgstr "このサーバーはすでに接続されています。再度認可す
 #: src/lib/run-error.ts
 msgid "This server's tool result does not fit the model. Turn off Keep tool results whole for that server, or choose another model."
 msgstr ""
+
+#: src/components/VaultSettings.tsx
+msgid "This Space keeps its own vault, so its bots can't use account items."
+msgstr "このスペースは独自の保管庫を使うため、そのボットはアカウントの項目を使えません。"
 
 #: src/pages/model-settings/connection-controls.tsx
 msgid "This subscription sign-in is not available in Rakazo yet. Use a deployment credential or choose another provider."
@@ -7413,6 +7484,10 @@ msgstr "Rakazoクレジットを使用"
 #: src/pages/memory-providers/HonchoSettingsForm.tsx
 msgid "Use up to 512 letters, digits, _ or -."
 msgstr "英数字、_、-のみで512文字以内で入力してください。"
+
+#: src/components/vault/VaultItemActivity.tsx
+msgid "Used {when} by {bot}"
+msgstr "{when}に{bot}が使用"
 
 #: src/pages/memory-providers/HonchoSettingsForm.tsx
 msgid "User peer"

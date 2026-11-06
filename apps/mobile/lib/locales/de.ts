@@ -9,6 +9,16 @@ export const DE_MESSAGES: Record<string, string> = {
   "Asks before sending, spending or changing anything in your apps.":
     "Fragt, bevor in deinen Apps etwas gesendet, ausgegeben oder geändert wird.",
   Haptics: "Haptisches Feedback",
+  "Logins, cards and details your bots can use for you.":
+    "Logins, Karten und Angaben, die deine Bots für dich nutzen können.",
+  "Add your first item": "Füge deinen ersten Eintrag hinzu",
+  "Bots type saved passwords and card numbers without seeing them.":
+    "Bots tippen gespeicherte Passwörter und Kartennummern ein, ohne sie zu sehen.",
+  "Signs in only on its own site": "Meldet sich nur auf der eigenen Website an",
+  "Asks you before every payment": "Fragt dich vor jeder Zahlung",
+  "Fills in a name, address or phone": "Füllt Name, Adresse oder Telefon aus",
+  "Lets a bot call a service": "Lässt einen Bot einen Dienst aufrufen",
+  "Set in the bot's commands": "Wird in den Befehlen des Bots gesetzt",
   "Add rule": "Regel hinzufügen",
   "Tool name": "Tool-Name",
   Address: "Adresse",
@@ -37,7 +47,6 @@ export const DE_MESSAGES: Record<string, string> = {
   Logins: "Anmeldungen",
   "Name on card": "Name auf der Karte",
   "New item": "Neuer Eintrag",
-  "Nothing saved yet.": "Noch nichts gespeichert.",
   Phone: "Telefon",
   "Security code": "Sicherheitscode",
   "State or region": "Bundesland oder Region",
@@ -1499,6 +1508,25 @@ export const DE_MESSAGES: Record<string, string> = {
   "Read from the page, not checked": "Von der Seite gelesen, nicht geprüft",
   Total: "Gesamt",
   "{name} options": "{name}: Optionen",
+  "Used {when} by {bot}": "{when} von {bot} verwendet",
+  Bots: "Bots",
+  "Saved, but this server can't block bots yet.":
+    "Gespeichert, aber dieser Server kann Bots noch nicht sperren.",
+  "Chosen bots": "Ausgewählte Bots",
+  "This item is blocked for bots. Allow it in the Vault, or dismiss the request.":
+    "Dieses Element ist für Bots gesperrt. Erlaube es im Tresor oder verwirf die Anfrage.",
+  "No bots": "Keine Bots",
+  "This limits only this Space's bots. Your other Spaces choose for their own.":
+    "Das beschränkt nur die Bots dieses Spaces. Deine anderen Spaces wählen für ihre eigenen.",
+  "This Space keeps its own vault, so its bots can't use account items.":
+    "Dieser Space hat einen eigenen Tresor, daher können seine Bots keine Kontoelemente verwenden.",
+  "Ask first": "Zuerst fragen",
+  "Saved, but this server can't ask you first.":
+    "Gespeichert, aber dieser Server kann dich nicht zuerst fragen.",
+  "Saved, but this server can't limit an item to chosen bots.":
+    "Gespeichert, aber dieser Server kann ein Element nicht auf ausgewählte Bots beschränken.",
+  "This bot can't use this item. Change it in the Vault, or dismiss the request.":
+    "Dieser Bot kann dieses Element nicht verwenden. Ändere das im Tresor oder verwirf die Anfrage.",
 };
 
 export const PEER_MESSAGE_FORMS: Partial<Record<Intl.LDMLPluralRule, string>> = {

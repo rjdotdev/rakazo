@@ -479,7 +479,7 @@ export async function ownedOrganizationId(
  * their own oldest organization, so a shared Space never bills its owner for someone else.
  */
 export async function organizationForMember(
-  prisma: PrismaClient,
+  prisma: Pick<PrismaClient, "space" | "member">,
   input: { spaceId: string; userId: string },
 ): Promise<{ organizationId: string; isOwner: boolean } | null> {
   const space = await prisma.space.findUnique({
