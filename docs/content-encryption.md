@@ -13,7 +13,8 @@ directory, so a copied database dump, backup or disk does not reveal it.
 | Memory documents and their revisions | `memory_documents.content`, `memory_revisions.content` |
 | Uploaded and generated files | `DATA_DIR/artifacts/<space>/<file>` |
 | Bot computer homes kept in [object storage](./self-host-storage.md#bot-homes-in-object-storage) (always, whatever `CONTENT_ENCRYPTION` says) | `homes/<id>/<revision>` in the bucket |
-| Credentials and vault items, contacts included (unchanged scheme) | `secrets`, `vault_credentials`, `bot_secrets`, `integration_provider_configs` |
+| Vault items (logins, cards, contacts, API credentials and command variables) | `vault_credentials.ciphertext` |
+| Other credentials (unchanged scheme) | `secrets`, `bot_secrets`, `integration_provider_configs` |
 
 Not yet encrypted, planned next: external conversation messages, outbound
 messaging bodies, steering messages, ticket comments, agent skills, taught
@@ -67,6 +68,20 @@ read-only and runs across spaces.
   `include`/`select`. Nested writes into these models are rejected, so content
   cannot reach the database through a path that skips encryption. Raw SQL
   reads use `contentEncryptionOf(prisma).openRows`.
+- **Vault items.** Each vault has its own key in `space_keys`: `user:<member id>`
+  for a member's account vault, `vault:<space id>` for a Space's own vault.
+  The authenticated data binds the table, column, row id, member and vault, so
+  a value copied to another item, member or vault fails to decrypt. Only
+  `migrate` creates a vault's key. Until it has, saves in that vault keep the
+  format sealed with `ENCRYPTION_KEY` that earlier releases read; once it has,
+  saves use the key while `CONTENT_ENCRYPTION` is on and `SECRET_STORE` is the
+  default (with [Infisical](./infisical-secrets.md) they stay in Infisical).
+  With Infisical, `migrate` also moves items still stored locally to their
+  vault keys; run `secrets:infisical` first to move them to Infisical instead.
+  `migrate` moves items whatever `CONTENT_ENCRYPTION` says, and they stay under
+  the key if it is turned off later, until saved again or `decrypt` runs.
+  Both formats always read. Deleting a member or a Space deletes its vault
+  key along with its vault items.
 - **Rollout tolerance.** Rows and files written before encryption read
   unchanged, so the application can run while `migrate` works through them.
 
@@ -103,8 +118,14 @@ Protects against:
 - A stolen copy of the artifact directory, without the master keys.
 - Someone with database write access moving ciphertext between rows, columns
   or spaces: the moved value fails to decrypt.
-- Deleted spaces: deleting a space deletes its keys (a database trigger), so
-  ciphertext left in unvacuumed pages, WAL or orphaned files is unreadable.
+- Deleted spaces and members: deleting a space deletes its keys, its own
+  vault's included, and deleting a member deletes their account vault's key
+  (database triggers), so ciphertext left in unvacuumed pages, WAL or orphaned
+  files is unreadable. Items in a Space's own vault from a member who is
+  deleted, leaves or is removed stay under that Space's vault key until the
+  Space is deleted. Vault items still in
+  the `ENCRYPTION_KEY` format, and copies left from before `migrate` moved them,
+  read with that key instead.
 
 Does not protect against:
 
@@ -131,7 +152,10 @@ Does not protect against:
    key is independent of `ENCRYPTION_KEY`.
 3. Deploy. Migrations add `space_keys` and the search index; new content is
    encrypted from the first request.
-4. Encrypt existing content, then check nothing is left:
+4. Once the previous release has stopped (its worker runs until its jobs
+   finish), encrypt existing content, then check nothing is left. Vault items
+   move to their keys only here, since the previous release cannot read them
+   afterwards:
 
    ```bash
    pnpm --filter @rakazo/api content-encryption migrate --dry-run
@@ -141,11 +165,28 @@ Does not protect against:
 
    `migrate` works in batches, locks each batch while rewriting it, and can be
    interrupted and rerun. It also upgrades credentials still stored in the
-   pre-v2 format (no record binding) to the current format. Run it where
+   pre-v2 format (no record binding) to the current format, and moves vault
+   items to the keys above, each with a compare-and-set, keeping its value
+   until the new one is written and checked; an item it cannot read is left
+   as it was and reported as failed. An item saved while it runs is reported
+   as changed concurrently; rerun `migrate` until it reports none. `--dry-run`
+   reads every item but creates no key. A vault first used after `migrate`,
+   such as a new member's, keeps the older format until `migrate` runs again;
+   `status` counts these on its `vault_credentials` line. Run it where
    `DATA_DIR` is mounted so artifacts are encrypted too.
 
-To roll back to a release without encryption, run
-`content-encryption decrypt` first; older releases cannot read ciphertext.
+To roll back to an earlier release, set `CONTENT_ENCRYPTION=off` on the API and
+worker (so new vault saves use the `ENCRYPTION_KEY` format again), then run
+`content-encryption decrypt`. It writes content and vault items back to the
+formats older releases read; releases before content encryption cannot read
+ciphertext, and releases before this one cannot read vault items under a vault
+key. An item edited while it runs can keep its vault key, so rerun it until it
+reports none changed concurrently. After rolling back to a release that has content encryption, turn
+`CONTENT_ENCRYPTION` back on there and run its `migrate` to encrypt content
+again; vault items stay in the `ENCRYPTION_KEY` format on that release. Vault
+keys stay after `decrypt`, so when deploying this release again later, keep
+`CONTENT_ENCRYPTION=off` until the previous release has stopped, then turn it on
+and run `migrate`.
 
 ## Rotation
 
@@ -162,6 +203,8 @@ Rotate the master key:
 Rotate data keys too (for example after suspected key exposure):
 `content-encryption rotate --reencrypt` adds a new key version to every space
 and re-encrypts messages, events, memory, summaries and artifacts under it.
+Vault items keep the key version they were written with, and vault keys
+(members' and Spaces' own) get no new version; `rotate` still re-wraps them.
 Running processes may keep writing with the previous version for up to ten
 minutes, so run `content-encryption reencrypt` again after that.
 
@@ -189,14 +232,22 @@ unwrap was for.
 To move existing keys, deploy with these settings (keys wrapped by local master
 keys keep unwrapping), run `content-encryption rotate`, and check that `status`
 lists every space key under `aws-kms:<key id>`. Keep `ENCRYPTION_KEY`: stored
-credentials still use it ([Infisical](./infisical-secrets.md) moves those out),
-and backups from before the rotation still unwrap with it.
+credentials still use it, apart from vault items under a vault key
+([Infisical](./infisical-secrets.md) moves those out), and backups from before
+the rotation still unwrap with it.
 
 To replace the KMS key, point `AWS_KMS_KEY_ARN` at the new one, keep
 `kms:Decrypt` on the old key, and run `rotate` again.
 
 While KMS is unreachable, a process cannot read or write content in a space
-whose key it has not cached. Startup logs master keys it cannot unwrap.
+whose key it has not cached. Vault items under a vault key depend on it the
+same way: logins and cards cannot be filled, saving into a vault with a key
+fails, and runs whose saved logins, cards and command variables cannot be loaded
+do not start: an agent run retries its setup for about 18 minutes,
+then fails with that reason, and a command change check is retried, without
+waking the computer, until KMS is back. A run that had
+already started runs its later shell commands without a variable it cannot
+load. Startup logs master keys it cannot unwrap.
 
 To run CLIs such as `content-encryption export` from a laptop with short-lived
 credentials, set `AWS_KMS_PROFILE` to a named AWS profile (including one from
