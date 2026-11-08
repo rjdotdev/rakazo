@@ -296,6 +296,11 @@ export interface ManagedConnectorProvider
   listReconnectRefs?(context: AdapterContext): Promise<string[]>;
   connectionReady(context: AdapterContext, externalId: string): Promise<boolean>;
   warmDirectory?(): Promise<void>;
+  /**
+   * Tools load only for connections that store the account id resolveConnectedAccountId returns,
+   * so startup stores it on connected rows that name only their app.
+   */
+  readonly toolsNeedAccountId?: boolean;
   /** Map a begin() state or stored ref to the concrete remote account id, skipping excluded ids. */
   resolveConnectedAccountId?(
     userId: string,

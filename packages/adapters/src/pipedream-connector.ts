@@ -107,6 +107,7 @@ function securePipedreamConnectUrl(value: string): URL {
 }
 
 export class PipedreamConnector implements ManagedConnectorProvider {
+  readonly toolsNeedAccountId = true;
   private accessToken?: { value: string; expiresAt: number };
   private accessTokenRequest?: Promise<string>;
   private directory?: { value: PipedreamApp[]; expiresAt: number };

@@ -137,6 +137,7 @@ import {
   requestClientIp,
   withClientIp,
 } from "./client-ip.js";
+import { settleUnpinnedConnections } from "./connection-flows.js";
 import { cspReportRoutes } from "./csp-report.js";
 import { configuredEmailProvider } from "./email.js";
 import { mountEmailInboundRoute } from "./email-inbound.js";
@@ -452,6 +453,9 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
     },
   );
   const { mcpOAuth, mcp, pipedream, installed, integrationSettings, stack } = connectors;
+  void settleUnpinnedConnections({ prisma, connectors: stack.connector }).catch((error) =>
+    getLogger().error("connection account backfill", error),
+  );
   const runtime =
     runtimeOverride ??
     (env.agentRuntime === "scripted"
