@@ -51,35 +51,6 @@ class Page(BaseHTTPRequestHandler):
         pass
 
 
-def running_programs():
-    names = set()
-    for proc in Path("/proc").iterdir():
-        if not proc.name.isdigit():
-            continue
-        try:
-            argv = (proc / "cmdline").read_bytes().split(b"\0", 1)[0]
-        except OSError:
-            continue
-        if argv:
-            names.add(argv.decode(errors="replace").rsplit("/", 1)[-1])
-    return names
-
-
-def assert_file_chooser_portals():
-    # Basename match: xdg-desktop-portal-gtk contains the frontend name.
-    required = ("xdg-desktop-portal", "xdg-desktop-portal-gtk")
-    missing = list(required)
-    for _ in range(50):
-        running = running_programs()
-        missing = [name for name in required if name not in running]
-        if not missing:
-            return
-        time.sleep(0.1)
-    raise AssertionError(
-        f"file-chooser portal daemons not running: {', '.join(missing)}; see /tmp/rakazo/portal.log and /tmp/rakazo/portal-gtk.log"
-    )
-
-
 def assert_browser_cookies(commands, bot):
     pages = []
     for _ in range(100):
@@ -95,6 +66,53 @@ def assert_browser_cookies(commands, bot):
     raise AssertionError(f"Bot {bot}'s independent browser cookie did not load: {pages}")
 
 
+def program(pid):
+    try:
+        argv = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+    except OSError:
+        return []
+    return argv if argv[0] else []
+
+
+def display_of(pid):
+    try:
+        entries = Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
+    except OSError:
+        return None
+    return next((entry[8:].decode() for entry in entries if entry.startswith(b"DISPLAY=")), None)
+
+
+def assert_file_chooser_on_screen(commands, bot):
+    # Chromium's chooser is drawn by the portal on its session bus, so that bus must be the screen's.
+    display = commands[f"display{bot}"]
+    bus = f"/tmp/rakazo/dbus-display-{display}"
+    key = Path(commands[f"profile{bot}"]).name.removeprefix("chromium-bot-")
+    browser = int(Path(f"/tmp/rakazo/browser-pid-{key}").read_text())
+    env = dict(os.environ, DBUS_SESSION_BUS_ADDRESS=f"unix:path={bus}")
+
+    def call(dest, method, *args):
+        command = ["dbus-send", "--session", "--print-reply", f"--dest={dest}", "/", method, *args]
+        return subprocess.run(command, env=env, text=True, capture_output=True, timeout=10).stdout
+
+    portals = {}
+    for _ in range(50):
+        # Activate the portal (Chromium's chooser target) and the GTK backend that draws the dialog,
+        # so the check does not depend on whether the browser has used them yet.
+        for service in ("org.freedesktop.portal.Desktop", "org.freedesktop.impl.portal.desktop.gtk"):
+            call(service, "org.freedesktop.DBus.Peer.Ping")
+        names = [part.strip('"') for part in call("org.freedesktop.DBus", "org.freedesktop.DBus.ListNames").split() if part.startswith('":')]
+        pids = {int(reply.split()[-1]) for name in names if (reply := call("org.freedesktop.DBus", "org.freedesktop.DBus.GetConnectionUnixProcessID", f"string:{name}").strip())}
+        portals = {Path(program(pid)[0].decode()).name: display_of(pid) for pid in pids if program(pid)}
+        if browser in pids and {name: portals.get(name) for name in ("xdg-desktop-portal", "xdg-desktop-portal-gtk")} == dict.fromkeys(("xdg-desktop-portal", "xdg-desktop-portal-gtk"), f":{display}"):
+            # Later launches on this screen reuse its bus instead of starting another one.
+            flag = f"--address=unix:path={bus}".encode()
+            daemons = [proc for proc in Path("/proc").iterdir() if proc.name.isdigit() and flag in program(proc.name)]
+            assert len(daemons) == 1, f"expected one bus for :{display}, found {len(daemons)}"
+            return
+        time.sleep(0.1)
+    raise AssertionError(f"browser on :{display} has no file-chooser portal on that display: {portals}")
+
+
 def main():
     with open(sys.argv[1]) as source:
         commands = json.load(source)
@@ -104,7 +122,6 @@ def main():
     run(commands, "reset")
     run(commands, "gh")
     run(commands, "ensurea")
-    assert_file_chooser_portals()
     run(commands, "seed")
     run(commands, "ensureb")
     menu = Path(f"/tmp/fluxbox-home-{commands['displayb']}/.fluxbox/menu").read_text()
@@ -113,6 +130,7 @@ def main():
         list(pool.map(lambda step: run(commands, step), ["opena", "openb"]))
     for bot in "ab":
         assert_browser_cookies(commands, bot)
+        assert_file_chooser_on_screen(commands, bot)
     run(commands, "controla")
     view_port, control_port = int(commands["viewPort"]), int(commands["controlPort"])
     viewer, response = websocket(view_port, "view-a")
@@ -199,7 +217,7 @@ def main():
     run(commands, "opena")
     assert_browser_cookies(commands, "a")
     run(commands, "stopa")
-    print("PASS: parallel desktops, independent cookies, persistent profiles, desktop cleanup, stale view/control token rejection, and file-chooser portals")
+    print("PASS: parallel desktops, independent cookies, persistent profiles, desktop cleanup, stale view/control token rejection, and file-chooser portals on each screen")
 
 
 if __name__ == "__main__":

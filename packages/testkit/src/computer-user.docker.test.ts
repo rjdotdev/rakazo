@@ -78,6 +78,22 @@ describe.skipIf(process.env.RUN_COMPUTER_REPLAY_DOCKER !== "1")(
             { encoding: "utf8", timeout: 10_000 },
           );
           expect(browser).toMatch(/Chrome|Chromium/);
+          // The screen launcher drops nss_wrapper for Chromium; the screen's own bus, which starts
+          // its file-chooser portal, must still come up for this identity.
+          execFileSync(
+            "docker",
+            [
+              "exec",
+              name,
+              "dbus-send",
+              "--bus=unix:path=/tmp/rakazo/dbus-display-1",
+              "--print-reply",
+              "--dest=org.freedesktop.DBus",
+              "/",
+              "org.freedesktop.DBus.Peer.Ping",
+            ],
+            { stdio: "pipe", timeout: 10_000 },
+          );
         } finally {
           execFileSync("docker", ["rm", "--force", name], { stdio: "pipe", timeout: 30_000 });
         }
