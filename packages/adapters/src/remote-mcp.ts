@@ -630,13 +630,23 @@ async function inspectSafeRemoteUrl(
   // Loopback is a private endpoint too: only the private-endpoint escape reaches it.
   const allowPrivate = policy.allowPrivateEndpoint === true;
   const privateHost = isPrivateRemoteMcpHostname(hostname);
+  const literal = literalAddresses(hostname);
+  // Name the setting only where it lifts the refusal: link-local stays blocked with it on.
+  const settingHint =
+    privateHost && !literal?.some((entry) => isAlwaysBlockedAddress(entry.address))
+      ? " Set MCP_ALLOW_PRIVATE_ENDPOINT=true on the API and worker to allow it."
+      : "";
   if (url.protocol === "http:" && !allowPrivate) {
-    throw new Error("Connector URL must use HTTPS");
+    throw new Error(
+      settingHint ? `Connector URL must use HTTPS.${settingHint}` : "Connector URL must use HTTPS",
+    );
   }
   if (privateHost && !allowPrivate) {
-    throw egressRefused(hostname, new Error("Connector URL targets a private host"));
+    throw egressRefused(
+      hostname,
+      new Error(`Connector URL targets a private host${settingHint ? `.${settingHint}` : ""}`),
+    );
   }
-  const literal = literalAddresses(hostname);
   if (url.protocol === "http:" && isLocalhostOrLoopbackIp(hostname)) {
     return { url, addresses: literal ?? [] };
   }
@@ -899,16 +909,16 @@ function assertAllowedAddresses(addresses: ResolvedAddress[], policy: RemoteUrlP
   assertPublicAddresses(addresses);
 }
 
+/** Link-local stays blocked even with the private-endpoint setting: that range holds cloud metadata, same as private credential fetches. */
+function isAlwaysBlockedAddress(address: string): boolean {
+  return isCloudMetadataAddress(address) || isLinkLocalAddress(address);
+}
+
 function assertUnmixedAddresses(addresses: ResolvedAddress[]): void {
   if (addresses.length === 0) {
     throw new Error("Connector URL resolves to a private address");
   }
-  // Link-local stays blocked: that range holds cloud metadata, same as private credential fetches.
-  if (
-    addresses.some(
-      (entry) => isCloudMetadataAddress(entry.address) || isLinkLocalAddress(entry.address),
-    )
-  ) {
+  if (addresses.some((entry) => isAlwaysBlockedAddress(entry.address))) {
     throw new Error("Connector URL resolves to a private address");
   }
   const hasPrivate = addresses.some((entry) => isNonPublicAddress(entry.address));
