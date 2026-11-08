@@ -275,6 +275,34 @@ describe("attachment helpers", () => {
   });
 });
 
+describe("tool step history", () => {
+  it("keeps the tools an earlier reply used, one line per stretch between its notes", () => {
+    expect(
+      blocksToAgentHistoryText(
+        [
+          {
+            kind: "steps",
+            steps: [
+              {
+                label: "Computer shell",
+                count: 2,
+                note: "Installing the password manager extension.",
+              },
+              { label: "Browser screenshot", count: 1 },
+              { label: "Computer shell", count: 1 },
+              { label: "Browser screenshot", count: 1, note: "Checking it loaded." },
+            ],
+          },
+          { kind: "text", text: "Done, it works." },
+        ],
+        { steps: true },
+      ),
+    ).toBe(
+      "Installing the password manager extension.\n[used Computer shell ×3, Browser screenshot]\nChecking it loaded.\n[used Browser screenshot]\nDone, it works.",
+    );
+  });
+});
+
 describe("peer message history", () => {
   it("keeps attribution so a later turn knows a bot spoke, not the user", () => {
     expect(
