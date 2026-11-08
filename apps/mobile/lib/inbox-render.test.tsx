@@ -335,6 +335,40 @@ it("skips unchanged inbox rows for 12 idle polls and renders the changed bot", (
   expect(measure(true)).toEqual({ mount: 30, idle: 0, changed: 1 });
 });
 
+it("shows each row's activity time, which Recent sorts by", () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date(2026, 9, 10, 23, 0));
+  const at = (hour: number) => new Date(2026, 9, 10, hour, 30).toISOString();
+  const chat = { name: "Helper", preview: "", updatedAt: at(8) };
+  try {
+    render(
+      <DayList
+        items={[
+          { type: "bot", bot: { ...chat, id: "a", lastMessageAt: at(21) } as MobileBot },
+          {
+            type: "bot",
+            bot: { ...chat, id: "b", lastMessageAt: null, createdAt: at(9) } as MobileBot,
+          },
+          // A server without the message time keeps the row's last change.
+          { type: "bot", bot: { ...chat, id: "d" } as MobileBot },
+          {
+            type: "group",
+            group: { ...chat, id: "c", name: "Team", members: [], lastMessageAt: at(22) },
+          } as unknown as InboxItem,
+        ]}
+      />,
+    );
+    expect(rowLabels()).toEqual([
+      "Helper, 21:30, No messages yet",
+      "Helper, 09:30, No messages yet",
+      "Helper, 08:30, No messages yet",
+      "Team, 22:30",
+    ]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it.each(["midnight", "focus", "foreground"])(
   "refreshes unchanged bot and group timestamps on %s",
   (trigger) => {

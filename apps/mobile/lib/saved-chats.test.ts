@@ -2,6 +2,7 @@ import { displayIdentityResult, displayMessageBlock } from "@rakazo/core";
 import { beforeEach, expect, it, vi } from "vitest";
 import { resetI18nForTests } from "./i18n";
 import { identityLabels } from "./identity-display";
+import { spaceInboxItems } from "./inbox-spaces";
 import type { MobileMe, MobileSnapshot, MobileSpaceNavigation } from "./mobile-types";
 import type { SavedChatsScope } from "./saved-chats";
 import {
@@ -181,7 +182,7 @@ it("round trips only what the inbox shows", () => {
   expect(readSavedInbox(scope)).toBeNull();
   writeSavedInbox(scope, navigation, me);
   expect(readSavedInbox(scope)?.bots).toEqual([bot]);
-  expect(readSavedInbox(scope)?.groups).toEqual([group]);
+  expect(readSavedInbox(scope)?.groups).toEqual(navigation.current.groups);
   const [contents] = [...state.files.values()];
   expect(contents).not.toContain("Private");
   writeSavedThread(scope, "bot:bot-a", thread(SAVED_CHAT_MESSAGES + 1));
@@ -189,6 +190,55 @@ it("round trips only what the inbox shows", () => {
   expect(saved.messages).toHaveLength(SAVED_CHAT_MESSAGES);
   expect(saved.run).toBeNull();
   expect(saved).not.toHaveProperty("cursor");
+});
+
+it("restores an offline inbox in Recent order, falling back to updatedAt for older saves", () => {
+  const at = (day: string) => `2026-03-${day}T00:00:00.000Z`;
+  const chats = {
+    ...navigation,
+    current: {
+      ...navigation.current,
+      bots: [
+        { ...bot, id: "old", sectionId: null, lastMessageAt: at("01"), updatedAt: at("03") },
+        { ...bot, id: "new", sectionId: null, lastMessageAt: at("09"), updatedAt: at("02") },
+        // Never messaged: Recent places it by when it was created.
+        {
+          ...bot,
+          id: "fresh",
+          sectionId: null,
+          lastMessageAt: null,
+          createdAt: at("07"),
+          updatedAt: at("04"),
+        },
+      ],
+      groups: [{ ...group, lastMessageAt: at("05"), updatedAt: at("01") }],
+    },
+  } as unknown as MobileSpaceNavigation;
+  writeSavedInbox(scope, chats, { ...me, botListOrder: "recent" });
+  const restoredOrder = () => {
+    const saved = readSavedInbox(scope)!;
+    expect(saved.me.botListOrder).toBe("recent");
+    return spaceInboxItems(
+      [{ id: "space-a", name: "Personal", isDefault: true, hasContent: true, ...saved }],
+      new Set(),
+      undefined,
+      Date.parse("2026-10-12T00:00:00.000Z"),
+      saved.me.botListOrder,
+    ).flatMap((item) =>
+      item.type === "bot" ? [item.bot.id] : item.type === "group" ? [item.group.id] : [],
+    );
+  };
+  expect(restoredOrder()).toEqual(["new", "fresh", "group-a", "old"]);
+
+  // An inbox saved before the time was kept still restores, ordered by when each chat changed.
+  const [path, contents] = [...state.files.entries()][0]!;
+  state.files.set(
+    path,
+    JSON.stringify(JSON.parse(contents), (key, value) =>
+      key === "lastMessageAt" ? undefined : value,
+    ),
+  );
+  expect(restoredOrder()).toEqual(["fresh", "old", "new", "group-a"]);
 });
 
 it.each([{ apiBase: "https://other.example.test" }, { userId: "user-b" }, { spaceId: "space-b" }])(

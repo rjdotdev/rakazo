@@ -1,9 +1,10 @@
-import type { SpaceBot, SpaceGroup } from "@rakazo/contracts";
+import type { BotListOrder, SpaceBot, SpaceGroup } from "@rakazo/contracts";
 import {
   botAvatarActivity,
   chatSnoozed,
   groupBotsForSidebar,
   logoAvatarNeedsAttention,
+  orderBotsForSidebar,
 } from "@rakazo/core";
 import { rpc, selectedSpaceId } from "./api";
 import { adoptDeletedSpaceFallback, selectSpace } from "./api-server";
@@ -119,6 +120,7 @@ export function spaceInboxItems(
   collapsed: ReadonlySet<string> = new Set(),
   editableSpaceId?: string,
   now = Date.now(),
+  order?: BotListOrder,
 ): InboxSpaceItem[] {
   return spaces.flatMap((space): InboxSpaceItem[] => {
     const allChats = [
@@ -128,6 +130,9 @@ export function spaceInboxItems(
         id: chat.id,
         pinned: chat.pinned,
         sectionId: chat.sectionId,
+        lastMessageAt: chat.lastMessageAt,
+        createdAt: chat.createdAt,
+        updatedAt: chat.updatedAt,
       })),
       ...space.groups.map((chat) => ({
         type: "group" as const,
@@ -135,6 +140,9 @@ export function spaceInboxItems(
         id: chat.id,
         pinned: chat.pinned,
         sectionId: chat.sectionId,
+        lastMessageAt: chat.lastMessageAt,
+        createdAt: chat.createdAt,
+        updatedAt: chat.updatedAt,
       })),
     ];
     const isSnoozed = (item: (typeof allChats)[number]) =>
@@ -145,7 +153,7 @@ export function spaceInboxItems(
     if (spaces.length > 1 || !space.isDefault || allChats.length === 0) {
       items.push({ type: "heading", key: space.id, title: space.name, space });
     }
-    for (const group of groupBotsForSidebar(chats, space.botSections, {
+    for (const group of groupBotsForSidebar(orderBotsForSidebar(chats, order), space.botSections, {
       includeEmptySections: true,
       labels: { pinned: t("Pinned"), unassigned: t("Unassigned") },
     })) {

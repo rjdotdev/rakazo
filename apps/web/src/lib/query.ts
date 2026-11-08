@@ -5,6 +5,7 @@ import { isRetryableError } from "@rakazo/core";
 import type { DataTag, QueryKey } from "@tanstack/react-query";
 import { QueryClient } from "@tanstack/react-query";
 import { createContext, useContext } from "react";
+import { botListOrder } from "./bot-list-order";
 import type { RpcClient } from "./rpc";
 import { createSpaceRpc, rpcForSpace, selectedSpaceId } from "./rpc";
 import { useBoundSpaceId } from "./space-rpc";
@@ -120,6 +121,9 @@ let cachedUserId: string | null | undefined;
 
 /** Forgets everything cached for another user, so sign-out or a switch never shows their data. */
 export function setQueryUser(userId: string | null): void {
-  if (cachedUserId !== undefined && cachedUserId !== userId) queryClient.clear();
+  if (cachedUserId !== undefined && cachedUserId !== userId) {
+    queryClient.clear();
+    botListOrder.reset();
+  }
   cachedUserId = userId;
 }

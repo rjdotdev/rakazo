@@ -83,6 +83,7 @@ import {
   ArtifactWithContentSchema,
   AvailabilityKindSchema,
   AvatarStyleSchema,
+  BotListOrderSchema,
   BotSchema,
   BotSectionName,
   BotSectionSchema,
@@ -390,6 +391,7 @@ export const appContract = {
             avatarStyle: AvatarStyleSchema.optional(),
             /** Restyles every bot not pinned to another set, and is what new bots get. */
             botAvatarSet: BotAvatarSetSchema.optional(),
+            botListOrder: BotListOrderSchema.optional(),
             timezone: TimeZoneSchema.nullable().optional(),
             /** The language the app runs in, so emails can be written in it. */
             locale: AppLocaleSchema.optional(),
@@ -398,6 +400,7 @@ export const appContract = {
             (input) =>
               input.avatarStyle !== undefined ||
               input.botAvatarSet !== undefined ||
+              input.botListOrder !== undefined ||
               input.timezone !== undefined ||
               input.locale !== undefined,
             { message: "Nothing to update" },

@@ -77,7 +77,7 @@ async function handle(handler: RouterHandler, ...args: Parameters<RouterHandler[
 describe("account preferences", () => {
   function preferencesDeps(avatarStyle: string, timezone: string | null = null) {
     const update = vi.fn().mockResolvedValue({});
-    const user = {
+    const user: Record<string, unknown> = {
       email: "user@rakazo.test",
       name: "Test User",
       avatarStyle,
@@ -162,6 +162,7 @@ describe("account preferences", () => {
       isDeploymentOwner: true,
     } satisfies Actor;
     return {
+      user,
       update,
       updateMany,
       botFindMany,
@@ -440,6 +441,36 @@ describe("account preferences", () => {
     );
     return response;
   }
+
+  it("saves a known bot list order and reads anything else as manual", async () => {
+    const setup = preferencesDeps("organic");
+    setup.user.botListOrder = "newest";
+    setup.update.mockImplementation(async ({ data }) => Object.assign(setup.user, data));
+
+    expect((await updatePreferences(setup, { botListOrder: "newest" })).status).toBe(400);
+    expect(setup.update).not.toHaveBeenCalled();
+    const me = await handle(
+      setup.handler,
+      new Request("http://127.0.0.1/rpc/me", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ json: null }),
+      }),
+      { prefix: "/rpc", context: { actor: setup.actor } },
+    );
+    await expect(me.json()).resolves.toEqual({
+      json: expect.objectContaining({ botListOrder: "manual" }),
+    });
+
+    const saved = await updatePreferences(setup, { botListOrder: "recent" });
+    expect(setup.update).toHaveBeenCalledWith({
+      where: { id: "user-1" },
+      data: { botListOrder: "recent" },
+    });
+    await expect(saved.json()).resolves.toEqual({
+      json: expect.objectContaining({ botListOrder: "recent" }),
+    });
+  });
 
   it("persists an IANA timezone without touching the avatar style", async () => {
     const setup = preferencesDeps("organic");

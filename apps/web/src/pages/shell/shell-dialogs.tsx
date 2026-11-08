@@ -1,9 +1,15 @@
 import { Trans, useLingui } from "@lingui/react/macro";
-import type { Bot, BotAvatarSet, BotSection, Group, Space } from "@rakazo/contracts";
+import type { Bot, BotAvatarSet, BotListOrder, BotSection, Group, Space } from "@rakazo/contracts";
+import { resolveBotListOrder } from "@rakazo/contracts";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@rakazo/ui-web";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
@@ -102,6 +108,8 @@ export function ShellDialogs({
   closeMobileSidebar,
   createBot,
   botAvatarSet,
+  botListOrder,
+  setBotListOrder,
   clearOpenThread,
   discardChatAttachments,
   deleteRoutineDialogProps,
@@ -123,6 +131,9 @@ export function ShellDialogs({
   createBot: (input: CreateBotDialogInput) => Promise<void>;
   /** The account's set, which a new bot takes. */
   botAvatarSet: BotAvatarSet;
+  /** Absent while the server predates it: the menu then leaves the choice out. */
+  botListOrder: BotListOrder | undefined;
+  setBotListOrder: (order: BotListOrder) => void;
   clearOpenThread: () => void;
   /** Drops a deleted chat's pending attachments with their previews. */
   discardChatAttachments: (threadKey: string) => void;
@@ -215,6 +226,27 @@ export function ShellDialogs({
                 <Trash2 />
                 {t`Delete space`}
               </DropdownMenuItem>
+            ) : null}
+            {botListOrder ? (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel>
+                    {t({ message: "Sort by", context: "sidebar order" })}
+                  </DropdownMenuLabel>
+                  <DropdownMenuRadioGroup
+                    value={botListOrder}
+                    onValueChange={(value) => setBotListOrder(resolveBotListOrder(value))}
+                  >
+                    <DropdownMenuRadioItem value="manual">
+                      {t({ message: "Manual", context: "sidebar order" })}
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="recent">
+                      {t({ message: "Most recent", context: "sidebar order" })}
+                    </DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuGroup>
+              </>
             ) : null}
           </DropdownMenuContent>
         </DropdownMenu>

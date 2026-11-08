@@ -1,5 +1,5 @@
 import type { SpaceBot, SpaceGroup } from "@rakazo/contracts";
-import { chatSnoozed, chatWoke, isRunWorking } from "@rakazo/core";
+import { chatActivityAt, chatSnoozed, chatWoke, isRunWorking } from "@rakazo/core";
 import { botColors } from "@rakazo/ui-tokens";
 import type { ReactElement, ReactNode } from "react";
 import { createContext, memo, useContext, useEffect, useState } from "react";
@@ -314,7 +314,8 @@ function chatTime(
 ) {
   if (chat.snoozedUntil && chatSnoozed(chat, now)) return formatSnoozeWake(chat.snoozedUntil);
   if (chatWoke(chat, now)) return t("Woke");
-  return chat.updatedAt ? formatThreadTime(chat.updatedAt, new Date(day)) : "";
+  const at = chatActivityAt(chat);
+  return at ? formatThreadTime(at, new Date(day)) : "";
 }
 
 /** A chat row with the iOS swipe actions and context menu; other platforms get the row as is. */

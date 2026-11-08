@@ -674,6 +674,13 @@ describePostgres("shared spaces: invites and membership (PostgreSQL)", () => {
     expect(
       (ownerList.json.spaces as Array<Record<string, unknown>>).find((space) => space.id === home),
     ).toMatchObject({ shared: true, canRename: true, canDelete: true });
+    // The list carries each member's own sidebar order, even inside someone else's Space.
+    await system.user.update({ where: { id: owner.id }, data: { botListOrder: "recent" } });
+    expect((await call(owner.actor, "spaces/list", {})).json.botListOrder).toBe("recent");
+    expect(fromShared.json.botListOrder).toBe("manual");
+    expect((await call(inSpace(invitee.actor, home), "spaces/list", {})).json.botListOrder).toBe(
+      "manual",
+    );
 
     // Creating while the shared Space is open still lands in the member's own organization.
     const created = await call(inSpace(invitee.actor, home), "spaces/create", { name: "Work" });

@@ -38,8 +38,9 @@ export type MobileBot = Pick<
   | "fleetManagement"
   | "crossSpaceCommunication"
   | "dailyCheckIns"
+  | "lastMessageAt"
 > &
-  Partial<Pick<Bot, "parentBotId" | "spaceId" | "instructions" | "snoozedUntil">>;
+  Partial<Pick<Bot, "parentBotId" | "spaceId" | "instructions" | "snoozedUntil" | "createdAt">>;
 export type MobileBotSection = BotSection;
 export type MobileMe = Pick<
   Me,
@@ -58,6 +59,7 @@ export type MobileMe = Pick<
   | "paymentWalletProvider"
   | "ticketBoardEnabled"
   | "botAvatarSet"
+  | "botListOrder"
 >;
 export type MobileModel = ModelCatalogEntry;
 /** Shared DTO includes headerNames only; header values remain in the server secret. */
@@ -75,8 +77,9 @@ export type MobileGroup = Pick<
   | "unread"
   | "updatedAt"
   | "members"
+  | "lastMessageAt"
 > &
-  Partial<Pick<Group, "spaceId" | "snoozedUntil">>;
+  Partial<Pick<Group, "spaceId" | "snoozedUntil" | "createdAt">>;
 export type MobileSpace = Space;
 export type MobileSpaceNavigation = SpaceNavigation;
 /**

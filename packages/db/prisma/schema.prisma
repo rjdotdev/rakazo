@@ -34,6 +34,8 @@ model User {
   avatarStyle                 String                       @default("organic")
   /// The icon set this user's bots wear unless one is pinned to another: "organic" or "rakazo".
   botAvatarSet                String                       @default("organic")
+  /// How the sidebar lists chats on every device: "manual" (drag order) or "recent".
+  botListOrder                String                       @default("manual")
   /// IANA timezone such as "Pacific/Auckland". Null until set; bots then get UTC only.
   timezone                    String?
   /// The app language last chosen, such as "es" or "pt-BR". Null until an app reports it;
@@ -2342,7 +2344,8 @@ model ExternalConversation {
   updatedAt                DateTime          @updatedAt
 
   @@unique([provider, workspaceId, externalKey])
-  @@index([spaceId, botId])
+  /// Also lists a bot's most recently active conversations first, for the roster's newest message.
+  @@index([spaceId, botId, updatedAt])
   @@map("external_conversations")
 }
 

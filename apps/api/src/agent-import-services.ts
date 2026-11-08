@@ -114,8 +114,7 @@ export function createAgentImportServices({
       (deps.providerCatalog ?? providerCatalogCache).invalidate(canonicalPiProviderId(provider)),
     prepareMcpServer,
     insertMcpServer,
-    findBot: async (actor, botId) =>
-      (await repos.listBots(actor)).find((bot) => bot.id === botId) ?? null,
+    findBot: async (actor, botId) => (await repos.listBots(actor, { botId }))[0] ?? null,
     assertRoutineSchedule,
     routineNextRunAt,
     routineRowData,

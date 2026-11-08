@@ -1,13 +1,16 @@
 import { MenuView } from "@expo/ui/community/menu";
+import { resolveBotListOrder } from "@rakazo/contracts";
 import { useRouter } from "expo-router";
 import type { ReactNode } from "react";
 import { Platform, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { mobileTokens, resolveMobileAppearance } from "../lib/appearance";
+import { botListOrderChoices } from "../lib/bot-list-order-choices";
 import type { CreateAction } from "../lib/create-chooser";
 import { createMenuActions, isCreateAction } from "../lib/create-chooser";
 import { useI18n } from "../lib/i18n";
 import { useThemedStyles } from "../lib/native";
+import { chooseBotListOrder, useBotListOrder } from "../lib/use-bot-list-order";
 import { GlassSurface } from "./glass-surface";
 import { CREATE_MENU_GAP, createHomeStyles } from "./home-styles";
 import { NativeSymbol } from "./native-symbol";
@@ -35,6 +38,7 @@ export function InboxHeader({
   const appearance = resolveMobileAppearance();
   const styles = useThemedStyles(createHomeStyles);
   const { t } = useI18n();
+  const botListOrder = useBotListOrder();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   return (
@@ -75,6 +79,29 @@ export function InboxHeader({
         >
           <NativeSymbol ios="magnifyingglass" android="search" size={17} />
         </HeaderButton>
+        {botListOrder ? (
+          <MenuView
+            title={t("Sort by")}
+            actions={botListOrderChoices(t).map(({ order, label }) => ({
+              id: order,
+              title: label,
+              state: order === botListOrder ? "on" : "off",
+            }))}
+            {...(Platform.OS === "android" ? { style: { marginBottom: -CREATE_MENU_GAP } } : {})}
+            colorScheme={appearance}
+            onPressAction={({ nativeEvent }) =>
+              chooseBotListOrder(resolveBotListOrder(nativeEvent.event))
+            }
+          >
+            <View
+              accessibilityLabel={t("Sort by")}
+              accessibilityRole="button"
+              style={[styles.headerButton, Platform.OS === "android" && styles.createMenuAnchor]}
+            >
+              <NativeSymbol ios="arrow.up.arrow.down" android="swap-vertical" size={17} />
+            </View>
+          </MenuView>
+        ) : null}
         <MenuView
           actions={createMenuActions(t, Platform.OS)}
           {...(Platform.OS === "android" ? { style: { marginBottom: -CREATE_MENU_GAP } } : {})}

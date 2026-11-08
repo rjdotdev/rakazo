@@ -27,7 +27,7 @@ import type { Prisma, PrismaClient } from "./client.js";
 import type { ComputerMode } from "./computers.js";
 import { ensureComputerRecord, parseComputerMode, teamComputerUserId } from "./computers.js";
 import { createThreadMessageInTransaction } from "./messages.js";
-import { withNewestThreadMessages } from "./preview-messages.js";
+import { newestBotMessageTimes, withNewestThreadMessages } from "./preview-messages.js";
 import { isUniqueViolation } from "./prisma-errors.js";
 import { BotSectionNameConflictError, IsolationError } from "./scope.js";
 import { lockSpaceForContentCreation } from "./spaces.js";
@@ -203,13 +203,19 @@ export function createRepos(
         pinned: true,
         sectionId: true,
         updatedAt: true,
+        createdAt: true,
         parentBotId: true,
         thread: { select: { id: true, reads: readStateFor(userId) } },
         runs: activeRunSelection,
       },
       orderBy: [{ pinned: "desc" }, { position: "asc" }, { createdAt: "asc" }],
     });
-    const bots = await withNewestThreadMessages(prisma, await withLatestBotRuns(prisma, rows), 1);
+    const [bots, lastMessageTimes] = await Promise.all([
+      withLatestBotRuns(prisma, rows).then((withRuns) =>
+        withNewestThreadMessages(prisma, withRuns, 1),
+      ),
+      newestBotMessageTimes(prisma, rows),
+    ]);
     return bots.map((bot) => {
       if (!bot.thread) throw new IsolationError("Bot is missing its thread");
       const activeRun = primaryActiveRun(bot.runs);
@@ -230,7 +236,9 @@ export function createRepos(
         status: activeRun?.status ?? "idle",
         threadStatus: threadRunStatus(bot.runs, bot.thread.id),
         runErrorId: rosterRunErrorId(bot.thread.runs[0], activeRun),
+        lastMessageAt: lastMessageTimes.get(bot.id)?.toISOString() ?? null,
         updatedAt: rosterUpdatedAt(bot.thread.messages[0], bot.updatedAt).toISOString(),
+        createdAt: bot.createdAt.toISOString(),
       };
     });
   }
@@ -357,26 +365,31 @@ export function createRepos(
       });
     },
 
-    async listBots(actor: Actor, options: { archived?: boolean } = {}): Promise<Bot[]> {
-      const bots = await withNewestThreadMessages(
-        prisma,
-        await withLatestBotRuns(
-          prisma,
-          await prisma.bot.findMany({
-            where: {
-              spaceId: actor.spaceId,
-              archivedAt: options.archived ? { not: null } : null,
-            },
-            include: {
-              thread: { include: { reads: readStateFor(actor.userId) } },
-              runs: activeRunSelection,
-              computer: { select: { scope: true } },
-            },
-            orderBy: [{ pinned: "desc" }, { position: "asc" }, { createdAt: "asc" }],
-          }),
+    /** The space's bots, or with `botId` just that one (so a single-bot reply pays for one). */
+    async listBots(
+      actor: Actor,
+      options: { archived?: boolean; botId?: string } = {},
+    ): Promise<Bot[]> {
+      const rows = await prisma.bot.findMany({
+        where: {
+          spaceId: actor.spaceId,
+          archivedAt: options.archived ? { not: null } : null,
+          ...(options.botId ? { id: options.botId } : {}),
+        },
+        include: {
+          thread: { include: { reads: readStateFor(actor.userId) } },
+          runs: activeRunSelection,
+          computer: { select: { scope: true } },
+        },
+        orderBy: [{ pinned: "desc" }, { position: "asc" }, { createdAt: "asc" }],
+      });
+      // The archived list is not ordered by activity, so it skips the activity query.
+      const [bots, lastMessageTimes] = await Promise.all([
+        withLatestBotRuns(prisma, rows).then((withRuns) =>
+          withNewestThreadMessages(prisma, withRuns, SIDEBAR_PREVIEW_MESSAGE_WINDOW),
         ),
-        SIDEBAR_PREVIEW_MESSAGE_WINDOW,
-      );
+        options.archived ? null : newestBotMessageTimes(prisma, rows),
+      ]);
       const callThreadIds = capabilities.phoneCallsEnabled
         ? bots.flatMap((bot) => (bot.thread ? [bot.thread.id] : []))
         : [];
@@ -481,7 +494,13 @@ export function createRepos(
                 : [],
             ),
           );
-          return { ...mapped, threadStatus: threadRunStatus(bot.runs, mapped.threadId) };
+          return {
+            ...mapped,
+            threadStatus: threadRunStatus(bot.runs, mapped.threadId),
+            ...(lastMessageTimes
+              ? { lastMessageAt: lastMessageTimes.get(bot.id)?.toISOString() ?? null }
+              : {}),
+          };
         }),
       );
     },

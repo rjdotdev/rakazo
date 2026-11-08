@@ -34,6 +34,19 @@ const baseBot = {
   computer: null,
 };
 
+function sqlOf(query: unknown) {
+  return (query as { sql: string }).sql;
+}
+
+/** A $queryRaw stand-in that answers each raw query by the first fragment its SQL contains. */
+function rawBy(rowsByFragment: Record<string, unknown[]>) {
+  return vi.fn(async (query: unknown) => {
+    const sql = sqlOf(query);
+    const match = Object.keys(rowsByFragment).find((fragment) => sql.includes(fragment));
+    return match ? rowsByFragment[match] : [];
+  });
+}
+
 function reposFor(memoryScope: string | null) {
   const prisma = {
     bot: {
@@ -427,6 +440,40 @@ describe("createRepos.listBots", () => {
     ]);
   });
 
+  it("reports chat activity for active bots only, never for the archived list", async () => {
+    const lastMessageAt = new Date("2026-08-20T10:30:00.000Z");
+    const $queryRaw = rawBy({ external_conversations: [{ botId: "bot-1", lastMessageAt }] });
+    const prisma = {
+      bot: { findMany: vi.fn(async () => [baseBot]) },
+      run: { findMany: vi.fn(async () => []) },
+      $queryRaw,
+    };
+    const repos = createRepos(prisma as unknown as PrismaClient);
+
+    const [active] = await repos.listBots(actor);
+    expect(active?.lastMessageAt).toBe(lastMessageAt.toISOString());
+
+    $queryRaw.mockClear();
+    const [archived] = await repos.listBots(actor, { archived: true });
+    expect(archived).not.toHaveProperty("lastMessageAt");
+    expect($queryRaw.mock.calls.map(([query]) => sqlOf(query))).not.toContainEqual(
+      expect.stringContaining("external_conversations"),
+    );
+  });
+
+  it("loads and probes activity for just the requested bot on a single-bot read", async () => {
+    const $queryRaw = rawBy({});
+    const findMany = vi.fn(async (_query: { where: unknown }) => [baseBot]);
+    const prisma = { bot: { findMany }, run: { findMany: vi.fn(async () => []) }, $queryRaw };
+
+    await createRepos(prisma as unknown as PrismaClient).listBots(actor, { botId: "bot-1" });
+    expect(findMany.mock.calls[0]?.[0].where).toMatchObject({ id: "bot-1" });
+    const activity = $queryRaw.mock.calls
+      .map(([query]) => query as { sql: string; values: unknown[] })
+      .find((query) => query.sql.includes("external_conversations"));
+    expect(activity?.values[0]).toEqual(["bot-1"]);
+  });
+
   it("keeps the bot's own updatedAt for a chat with no messages", async () => {
     await expect(reposFor(null).listBots(actor)).resolves.toEqual([
       expect.objectContaining({ updatedAt: "2026-08-19T00:00:00.000Z" }),
@@ -447,6 +494,7 @@ describe("createRepos.listSpaceBotsForSpaces", () => {
         pinned: true,
         sectionId: null,
         updatedAt: new Date("2026-08-20T00:00:00.000Z"),
+        createdAt: new Date("2026-08-01T00:00:00.000Z"),
         parentBotId: null,
         thread: {
           id: "thread-2",
@@ -458,10 +506,12 @@ describe("createRepos.listSpaceBotsForSpaces", () => {
     ]);
     const repos = createRepos({
       bot: { findMany },
-      $queryRaw: vi
-        .fn()
-        .mockResolvedValueOnce([{ id: "run-failed", threadId: "thread-2", status: "failed" }])
-        .mockResolvedValueOnce([
+      $queryRaw: rawBy({
+        external_conversations: [
+          { botId: "bot-2", lastMessageAt: new Date("2026-08-19T13:00:00.000Z") },
+        ],
+        "FROM runs": [{ id: "run-failed", threadId: "thread-2", status: "failed" }],
+        "FROM messages": [
           {
             id: "message-2",
             threadId: "thread-2",
@@ -475,7 +525,8 @@ describe("createRepos.listSpaceBotsForSpaces", () => {
             clientNonce: null,
             createdAt: new Date("2026-08-19T12:00:00.000Z"),
           },
-        ]),
+        ],
+      }),
     } as unknown as PrismaClient);
 
     await expect(repos.listSpaceBotsForSpaces(["ws-2"], "user-1")).resolves.toEqual([
@@ -496,7 +547,9 @@ describe("createRepos.listSpaceBotsForSpaces", () => {
         status: "running",
         threadStatus: "idle",
         runErrorId: "run-failed",
+        lastMessageAt: "2026-08-19T13:00:00.000Z",
         updatedAt: "2026-08-19T12:00:00.000Z",
+        createdAt: "2026-08-01T00:00:00.000Z",
       },
     ]);
     const query = findMany.mock.calls[0]![0];

@@ -1,5 +1,6 @@
 import { ORPCError } from "@orpc/server";
 import type { Actor, SpaceNavigation } from "@rakazo/contracts";
+import { resolveBotListOrder } from "@rakazo/contracts";
 import type { createGroupRepos, createRepos, PrismaClient } from "@rakazo/db";
 import {
   acceptSpaceInvite,
@@ -421,6 +422,7 @@ async function memberSpaceNavigation(
     externalConversations,
     contentBots,
     contentGroups,
+    user,
   ] = await Promise.all([
     repos.listBots(actor),
     groupRepos.listGroups(actor),
@@ -440,6 +442,10 @@ async function memberSpaceNavigation(
       where: { spaceId: { in: spaceIds } },
       select: { spaceId: true },
       distinct: ["spaceId"],
+    }),
+    deps.prisma.user.findUniqueOrThrow({
+      where: { id: actor.userId },
+      select: { botListOrder: true },
     }),
   ]);
   const botCounts = new Map(contentBots.map((row) => [row.spaceId, row._count._all]));
@@ -503,7 +509,9 @@ async function memberSpaceNavigation(
           status: bot.status,
           threadStatus: bot.threadStatus,
           runErrorId: bot.runErrorId,
+          lastMessageAt: bot.lastMessageAt,
           updatedAt: bot.updatedAt,
+          createdAt: bot.createdAt,
         })),
         groups: spaceGroups.map((group) => ({
           id: group.id,
@@ -515,7 +523,9 @@ async function memberSpaceNavigation(
           preview: group.preview,
           unread: group.unread,
           snoozedUntil: group.snoozedUntil,
+          lastMessageAt: group.lastMessageAt,
           updatedAt: group.updatedAt,
+          createdAt: group.createdAt,
         })),
         externalConversations: externalConversations.filter(
           (conversation) => conversation.spaceId === membership.spaceId,
@@ -523,6 +533,7 @@ async function memberSpaceNavigation(
         botSections: sectionsFor(membership.spaceId),
       };
     }),
+    botListOrder: resolveBotListOrder(user.botListOrder),
   };
 }
 

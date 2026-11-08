@@ -90,6 +90,7 @@ import {
 import { useSplitView } from "../lib/split-view";
 import { confirmUnsentSendLoss } from "../lib/unsent-send-warning";
 import { useArchivedCount } from "../lib/use-archived-count";
+import { botListOrderStore, useBotListOrder } from "../lib/use-bot-list-order";
 import { useCollapsedSections } from "../lib/use-collapsed-sections";
 import { useHomeHeader } from "../lib/use-home-header";
 import { useHomeInbox } from "../lib/use-home-inbox";
@@ -254,6 +255,8 @@ function Home({ embedded, onSelectSpace, onShareSelect }: InboxPaneProps & { emb
       setGroups(saved.groups);
       setSpaces(saved.spaces);
       setMe(saved.me);
+      // A launch shows the saved order until the server answers.
+      if (!botListOrderStore.get()) botListOrderStore.serverSaid(saved.me.botListOrder);
     });
     return () => {
       cancelled = true;
@@ -341,6 +344,7 @@ function Home({ embedded, onSelectSpace, onShareSelect }: InboxPaneProps & { emb
     inboxSpaces.map(({ id, botSections }) => ({ id, botSections })),
   );
   if (spaceSections !== keptSections) setKeptSections(spaceSections);
+  const botListOrder = useBotListOrder();
   const listData = useMemo((): InboxItem[] => {
     // Only bot threads support importing shares; use the same rows for every target.
     if (onShareSelect)
@@ -370,12 +374,19 @@ function Home({ embedded, onSelectSpace, onShareSelect }: InboxPaneProps & { emb
         (group) => SWIPE_ROWS || !group.pinned || chatSnoozed(group, snoozeNow),
       ),
     }));
-    const items: InboxItem[] = spaceInboxItems(sidebarSpaces, collapsed, me?.spaceId, snoozeNow);
+    const items: InboxItem[] = spaceInboxItems(
+      sidebarSpaces,
+      collapsed,
+      me?.spaceId,
+      snoozeNow,
+      botListOrder,
+    );
     return !SWIPE_ROWS && pinned.length > 0 ? [{ type: "pinned", chats: pinned }, ...items] : items;
   }, [
     inboxSpaces,
     collapsed,
     me?.spaceId,
+    botListOrder,
     shownSpaces,
     visible,
     visibleGroups,

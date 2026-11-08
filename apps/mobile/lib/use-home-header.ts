@@ -1,11 +1,16 @@
 import { useNavigation, useRouter } from "expo-router";
 import type { ReactNode } from "react";
 import { useLayoutEffect } from "react";
+import { botListOrderChoices } from "./bot-list-order-choices";
 import type { CreateAction } from "./create-chooser";
 import { createMenuItems } from "./create-chooser";
 import { useI18n } from "./i18n";
+import { chooseBotListOrder, useBotListOrder } from "./use-bot-list-order";
 
-/** Liquid Glass home header: account on the left; activity, search and create on the right. */
+/**
+ * Liquid Glass home header: account on the left; activity, search, sort and create on the right.
+ * Sort shows only once the server keeps the choice.
+ */
 export function useHomeHeader({
   nativeHeader,
   ready,
@@ -26,6 +31,7 @@ export function useHomeHeader({
   headerTitle?: () => ReactNode;
 }) {
   const navigation = useNavigation();
+  const botListOrder = useBotListOrder();
   const router = useRouter();
   const { t, locale } = useI18n();
   useLayoutEffect(() => {
@@ -63,6 +69,25 @@ export function useHomeHeader({
           icon: { type: "sfSymbol" as const, name: "magnifyingglass" },
           onPress: () => router.push("/search"),
         },
+        ...(botListOrder
+          ? [
+              {
+                type: "menu" as const,
+                label: t("Sort by"),
+                accessibilityLabel: t("Sort by"),
+                icon: { type: "sfSymbol" as const, name: "arrow.up.arrow.down" },
+                menu: {
+                  title: t("Sort by"),
+                  items: botListOrderChoices(t).map(({ order, label }) => ({
+                    type: "action" as const,
+                    label,
+                    state: order === botListOrder ? ("on" as const) : ("off" as const),
+                    onPress: () => chooseBotListOrder(order),
+                  })),
+                },
+              },
+            ]
+          : []),
         {
           type: "menu" as const,
           label: t("Create"),
@@ -88,6 +113,7 @@ export function useHomeHeader({
     activityMode,
     toggleActivityMode,
     runCreateAction,
+    botListOrder,
     headerTitle,
     router,
     t,

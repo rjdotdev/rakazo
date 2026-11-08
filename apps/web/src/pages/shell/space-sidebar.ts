@@ -1,4 +1,5 @@
-import { chatSnoozed, chatWoke, groupBotsForSidebar } from "@rakazo/core";
+import type { BotListOrder } from "@rakazo/contracts";
+import { chatSnoozed, chatWoke, groupBotsForSidebar, orderBotsForSidebar } from "@rakazo/core";
 
 type SidebarChat = {
   id: string;
@@ -7,6 +8,9 @@ type SidebarChat = {
   pinned: boolean;
   sectionId: string | null;
   snoozedUntil?: string | null;
+  lastMessageAt?: string | null;
+  updatedAt?: string;
+  createdAt?: string;
 };
 
 type SidebarSpace<TBot extends SidebarChat, TGroup extends SidebarChat> = {
@@ -44,6 +48,7 @@ export function sidebarGroupsForSpaces<TBot extends SidebarChat, TGroup extends 
   query: string,
   labels?: { pinned: string; unassigned: string },
   now = Date.now(),
+  order?: BotListOrder,
 ) {
   const needle = query.toLowerCase();
   const showSpaceNames = spaces.length > 1;
@@ -56,16 +61,22 @@ export function sidebarGroupsForSpaces<TBot extends SidebarChat, TGroup extends 
     const visibleBots = space.bots.filter(listed);
     const visibleGroups = space.groups.filter(listed);
     const grouped = groupBotsForSidebar(
-      [
-        ...visibleBots.map((chat) => ({ kind: "bot" as const, chat })),
-        ...visibleGroups.map((chat) => ({ kind: "group" as const, chat })),
-      ].map((item) => ({
-        ...item,
-        id: item.chat.id,
-        pinned: item.chat.pinned,
-        sectionId: item.chat.sectionId,
-        woke: chatWoke(item.chat, now),
-      })),
+      orderBotsForSidebar(
+        [
+          ...visibleBots.map((chat) => ({ kind: "bot" as const, chat })),
+          ...visibleGroups.map((chat) => ({ kind: "group" as const, chat })),
+        ].map((item) => ({
+          ...item,
+          id: item.chat.id,
+          pinned: item.chat.pinned,
+          sectionId: item.chat.sectionId,
+          lastMessageAt: item.chat.lastMessageAt,
+          updatedAt: item.chat.updatedAt,
+          createdAt: item.chat.createdAt,
+          woke: chatWoke(item.chat, now),
+        })),
+        order,
+      ),
       space.botSections,
       { labels },
     );
@@ -81,12 +92,12 @@ export function sidebarGroupsForSpaces<TBot extends SidebarChat, TGroup extends 
       if (!grouped.some((group) => group.key === "unassigned")) {
         grouped.push({ key: "unassigned", title: labels?.unassigned ?? "Unassigned", bots: [] });
       }
-      const order = [
+      const sectionOrder = [
         "pinned",
         ...space.botSections.map((section) => `section:${section.id}`),
         "unassigned",
       ];
-      grouped.sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
+      grouped.sort((a, b) => sectionOrder.indexOf(a.key) - sectionOrder.indexOf(b.key));
     }
     const sections = grouped.map((group, index) => ({
       ...group,

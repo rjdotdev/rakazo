@@ -1,7 +1,16 @@
 import { i18n } from "@lingui/core";
 import { t } from "@lingui/core/macro";
 import { Trans, useLingui } from "@lingui/react/macro";
-import type { Bot, BotSection, Group, Me, Space, ThreadSnapshot } from "@rakazo/contracts";
+import type {
+  Bot,
+  BotListOrder,
+  BotSection,
+  Group,
+  Me,
+  Space,
+  ThreadSnapshot,
+} from "@rakazo/contracts";
+import { chatActivityAt } from "@rakazo/core";
 import {
   BotAvatar,
   Button,
@@ -63,6 +72,7 @@ export function SidebarRoster({
   botMenu,
   setBotMenu,
   reorderRosterBot,
+  botListOrder,
   activeSnapshot,
   botMenuContent,
   mini = false,
@@ -95,6 +105,7 @@ export function SidebarRoster({
   botMenu: { kind: "bot" | "group"; id: string } | null;
   setBotMenu: Dispatch<SetStateAction<{ kind: "bot" | "group"; id: string } | null>>;
   reorderRosterBot: (sourceId: string, targetId: string, groupBotIds: string[]) => void;
+  botListOrder: BotListOrder | undefined;
   activeSnapshot: ThreadSnapshot | null;
   botMenuContent: ReactNode;
   mini?: boolean;
@@ -308,6 +319,10 @@ export function SidebarRoster({
                             memberIds: item.chat.members.map((member) => member.botId),
                           },
                         };
+                // Recent shows rows by time, so only Pinned, which keeps its drag order, reorders
+                // there; every bot can still be dragged to a section or a group.
+                const reorderable =
+                  item.kind === "bot" && (botListOrder !== "recent" || item.chat.pinned);
                 const rowSameList =
                   Boolean(draggedBotId) && groupBotIds.includes(draggedBotId ?? "");
                 const rowDropKey = `row:${item.kind}:${item.chat.id}`;
@@ -351,9 +366,7 @@ export function SidebarRoster({
                             .join(" ") || undefined
                         : undefined
                     }
-                    aria-keyshortcuts={
-                      item.kind === "bot" ? "Alt+ArrowUp Alt+ArrowDown" : undefined
-                    }
+                    aria-keyshortcuts={reorderable ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
                     onDragStart={(event) => {
                       if (item.kind !== "bot") return;
                       setDraggedBotId(item.chat.id);
@@ -381,6 +394,7 @@ export function SidebarRoster({
                     data-roster-drop={rosterDropKey === rowDropKey ? "true" : undefined}
                     onKeyDown={(event) => {
                       if (
+                        !reorderable ||
                         item.kind !== "bot" ||
                         !event.altKey ||
                         (event.key !== "ArrowUp" && event.key !== "ArrowDown")
@@ -483,7 +497,7 @@ export function SidebarRoster({
                                 data-roster-time
                                 className="text-label text-faint-foreground tabular-nums"
                               >
-                                {formatRosterTime(item.chat.updatedAt)}
+                                {formatRosterTime(chatActivityAt(item.chat))}
                               </span>
                             ) : null}
                             {item.chat.unread ? (

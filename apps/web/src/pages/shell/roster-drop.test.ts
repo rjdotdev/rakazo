@@ -138,4 +138,16 @@ describe("resolveRosterDrop", () => {
       }),
     ).toBeNull();
   });
+
+  it("in Recent, an unpinned bot moves and joins but never reorders", () => {
+    const drop = (target: Parameters<typeof resolveRosterDrop>[0]["target"], sameList = false) =>
+      resolveRosterDrop({ dragged: bot("a", "s1"), target, sameList, order: "recent" });
+    expect(drop({ kind: "bot", chat: bot("b", "s1") }, true)).toBeNull();
+    expect(drop({ kind: "section", sectionId: "s2" })).toEqual({ action: "move", sectionId: "s2" });
+    expect(drop({ kind: "group", chat: group("g1", null, ["b"]) })).toEqual({
+      action: "join",
+      groupId: "g1",
+      botIds: ["b", "a"],
+    });
+  });
 });

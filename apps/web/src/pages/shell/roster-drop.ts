@@ -1,3 +1,4 @@
+import type { BotListOrder } from "@rakazo/contracts";
 import { GROUP_MEMBER_MAX } from "@rakazo/contracts";
 
 type DraggedBot = { id: string; sectionId: string | null; pinned: boolean };
@@ -16,14 +17,16 @@ export type RosterDropAction =
  * Decide what dropping a dragged bot on a sidebar target does. Dropping on a
  * sibling row reorders; dropping on another section (its header or one of its
  * rows) moves the bot there; dropping on a group chat adds the bot as a member.
- * Pinned bots live in the Pinned list, so they only reorder. Returns null when
- * the drop should be refused.
+ * Pinned bots live in the Pinned list, so they only reorder. Recent lists the
+ * rest by time, so there they move and join but never reorder. Returns null
+ * when the drop should be refused.
  */
 export function resolveRosterDrop(input: {
   dragged: DraggedBot;
   target: RosterDropTarget;
   /** True when the target and dragged rows belong to the same visible list. */
   sameList: boolean;
+  order?: BotListOrder;
 }): RosterDropAction | null {
   const { dragged, target } = input;
   switch (target.kind) {
@@ -31,7 +34,8 @@ export function resolveRosterDrop(input: {
       if (target.chat.id === dragged.id) return null;
       if (dragged.pinned !== target.chat.pinned) return null;
       if (dragged.pinned || target.chat.sectionId === dragged.sectionId) {
-        return input.sameList ? { action: "reorder", targetBotId: target.chat.id } : null;
+        if (!input.sameList || (input.order === "recent" && !dragged.pinned)) return null;
+        return { action: "reorder", targetBotId: target.chat.id };
       }
       return { action: "move", sectionId: target.chat.sectionId };
     }

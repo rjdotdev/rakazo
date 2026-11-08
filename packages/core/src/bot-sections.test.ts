@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { groupBotsForSidebar, reorderBotTo } from "./bot-sections.js";
+import {
+  chatActivityAt,
+  groupBotsForSidebar,
+  orderBotsForSidebar,
+  reorderBotTo,
+} from "./bot-sections.js";
 
 const sections = [
   { id: "work", name: "Work" },
@@ -75,5 +80,43 @@ describe("reorderBotTo", () => {
   it("leaves the list alone when either bot is missing or unchanged", () => {
     expect(reorderBotTo(bots, "a", "missing")).toBe(bots);
     expect(reorderBotTo(bots, "a", "a")).toBe(bots);
+  });
+});
+
+describe("orderBotsForSidebar", () => {
+  const at = (minute: number) => new Date(Date.UTC(2026, 10, 8, 9, minute)).toISOString();
+  const chat = (
+    id: string,
+    lastMessageAt: string | null,
+    { pinned = false, createdAt = at(0), updatedAt = at(59) } = {},
+  ) => ({ id, pinned, sectionId: null, lastMessageAt, createdAt, updatedAt });
+  const ids = (list: readonly { id: string }[]) => list.map((item) => item.id);
+
+  it("sorts each section by newest real message, else creation time; ties and Pinned keep drag order", () => {
+    const chats = [
+      chat("pin-old", at(1), { pinned: true }),
+      chat("pin-new", at(9), { pinned: true }),
+      chat("old", at(2)),
+      chat("tie-a", at(4)),
+      chat("tie-b", at(4)),
+      // Never messaged (or only system notes and ticket work): its creation time, not its last edit.
+      chat("never", null, { createdAt: at(3), updatedAt: at(58) }),
+      chat("new", at(9)),
+    ];
+    expect(ids(orderBotsForSidebar(chats, "recent"))).toEqual([
+      "pin-old",
+      "pin-new",
+      "new",
+      "tie-a",
+      "tie-b",
+      "never",
+      "old",
+    ]);
+    expect(orderBotsForSidebar(chats, "manual")).toBe(chats);
+  });
+
+  it("keeps the row time an older server sends", () => {
+    expect(chatActivityAt({ updatedAt: at(5) })).toBe(at(5));
+    expect(chatActivityAt({ lastMessageAt: null, createdAt: at(1), updatedAt: at(5) })).toBe(at(1));
   });
 });
