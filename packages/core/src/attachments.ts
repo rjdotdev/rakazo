@@ -8,6 +8,7 @@ import {
   isAttachmentImageMimeType,
 } from "@rakazo/contracts";
 import { isApprovalAskBlock, isSecretAskBlock } from "./action-approval.js";
+import type { ToolStep } from "./events.js";
 
 export class AttachmentValidationError extends Error {
   constructor(message: string) {
@@ -165,13 +166,55 @@ export function promptTextForAttachments(
   return [caption, ...notes].filter(Boolean).join("\n\n") || "See attached files.";
 }
 
-export function blocksToAgentHistoryText(blocks: MessageBlock[]): string {
+const MAX_HISTORY_STEPS_PER_LINE = 8;
+
+/**
+ * Tools used between notes, in the order they ran, one line per stretch. A line shows at most
+ * MAX_HISTORY_STEPS_PER_LINE steps and counts the calls it leaves out, so alternating tools stay bounded.
+ */
+function stepsHistoryText(steps: readonly ToolStep[]): string {
+  const lines: string[] = [];
+  let stretch: ToolStep[] = [];
+  const flush = () => {
+    if (stretch.length === 0) return;
+    const used = stretch
+      .slice(0, MAX_HISTORY_STEPS_PER_LINE)
+      .map(({ label, count }) => (count > 1 ? `${label} ×${count}` : label));
+    const more = stretch
+      .slice(MAX_HISTORY_STEPS_PER_LINE)
+      .reduce((total, step) => total + step.count, 0);
+    if (more > 0) used.push(`… +${more} more`);
+    lines.push(`[used ${used.join(", ")}]`);
+    stretch = [];
+  };
+  for (const step of steps) {
+    if (step.note) {
+      flush();
+      lines.push(step.note);
+    }
+    stretch.push(step);
+  }
+  flush();
+  return lines.join("\n");
+}
+
+/**
+ * `steps` adds the tools a reply used and the notes written before them. Only run history asks
+ * for them: long notes would push a quoted answer past its cut or a compaction batch past its cap.
+ */
+export function blocksToAgentHistoryText(
+  blocks: MessageBlock[],
+  options: { steps?: boolean } = {},
+): string {
   return blocks
     .map((block) => {
       if (block.kind === "text") return block.text;
       if (block.kind === "chart") return `[chart: ${block.name}]`;
       if (block.kind === "app") return `[app: ${block.server} showed ${block.tool}]`;
       if (block.kind === "image") return `[image: ${block.name}]`;
+      // Without its steps and the notes written before them, a later turn forgets which tools
+      // it used and what it said it was doing.
+      if (block.kind === "steps") return options.steps ? stepsHistoryText(block.steps) : "";
       // The id lets a later turn, or another chat, update this page instead of making a new one.
       if (block.kind === "page") {
         return `[page: ${block.title} (pageId ${block.pageId}, version ${block.version})]`;

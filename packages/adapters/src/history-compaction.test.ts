@@ -1096,6 +1096,27 @@ describe("compactHistory", () => {
     expect(harness.thread.historyCompactedUpToSeq).toBeLessThan(49);
   });
 
+  it("leaves tool steps out of the transcript, so they cannot push a batch past its budget", async () => {
+    const harness = compactionHarness({
+      deploymentModelKey: "openrouter-key",
+      messages: Array.from({ length: 50 }, (_, i) => ({
+        seq: i,
+        role: "bot",
+        blocks: [
+          { kind: "steps", steps: [{ label: "Computer shell", count: 1, note: "n".repeat(400) }] },
+          { kind: "text", text: `marker-${i} ${"x".repeat(700)}` },
+        ],
+      })),
+    });
+
+    await compactHistory(harness.deps, "thread-1");
+
+    const [request] = harness.runtime.run.mock.calls[0]!;
+    expect(request.prompt).toContain("marker-49 ");
+    expect(request.prompt).not.toContain("Computer shell");
+    expect(harness.thread.historyCompactedUpToSeq).toBe(49);
+  });
+
   it("names the speakers in the transcript, and never the person", async () => {
     const harness = compactionHarness({
       deploymentModelKey: "openrouter-key",
