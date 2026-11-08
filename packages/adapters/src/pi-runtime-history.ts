@@ -73,7 +73,7 @@ export function toHistory(
       rakazoCreatedAt: m.createdAt,
     };
     if (m.role === "assistant" && !m.speaker) {
-      // A reply that holds only tool work has no text to replay.
+      // A reply with no text and no recorded steps has nothing to replay.
       if (!m.content.trim()) return [];
       return [
         {
