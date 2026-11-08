@@ -14,6 +14,8 @@ import {
   IsolationError,
   ProviderTransactionBusyError,
   recordSecurityEvent,
+  runAsSystem,
+  runAsTenant,
   runProviderTransaction,
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
@@ -330,10 +332,59 @@ export async function beginConnection(
   }
 }
 
+/**
+ * Stores the account on connected rows that still name only their app, such as rows made
+ * before connections recorded their account, so their tools load without a reconnect.
+ */
+export async function settleUnpinnedConnections(deps: Pick<RouterDeps, "prisma" | "connectors">) {
+  const rows = await runAsSystem(
+    "store accounts on connections that name only their app",
+    () =>
+      deps.prisma.$queryRaw<
+        Array<{ id: string; spaceId: string; userId: string; connectorId: string }>
+      >`
+      SELECT id, "spaceId", "userId", "connectorId" FROM connections
+      WHERE status = 'connected' AND "providerRef" = provider
+      ORDER BY "createdAt", id`,
+  );
+  const needsAccountId = new Map<string, boolean>();
+  for (const row of rows) {
+    let needed = needsAccountId.get(row.connectorId);
+    if (needed === undefined) {
+      const connector = deps.connectors.managed(row.connectorId);
+      const prepared = connector
+        ? await prepareManagedConnectorForTransaction(connector).catch((error: unknown) => {
+            getLogger().warn("connection account backfill skipped a connector", {
+              connectorId: row.connectorId,
+              reason: sanitizeIntegrationError(error),
+            });
+            return undefined;
+          })
+        : undefined;
+      needed = prepared?.provider?.toolsNeedAccountId === true;
+      needsAccountId.set(row.connectorId, needed);
+    }
+    if (!needed) continue;
+    await runAsTenant(row, () =>
+      completeConnection(
+        deps,
+        { actor: row, signal: AbortSignal.timeout(30_000) },
+        { connectionId: row.id, onlyAccount: true },
+      ),
+    ).catch((error: unknown) => {
+      getLogger().warn("connection account backfill failed", {
+        connectionId: row.id,
+        reason: sanitizeIntegrationError(error),
+      });
+    });
+  }
+}
+
 export async function completeConnection(
-  deps: RouterDeps,
-  context: { actor: Actor; signal?: AbortSignal },
-  input: { connectionId: string; code?: string },
+  deps: Pick<RouterDeps, "prisma" | "connectors">,
+  context: { actor: Pick<Actor, "spaceId" | "userId">; signal?: AbortSignal },
+  // onlyAccount: store an account only when it is the one candidate, since nobody is choosing.
+  input: { connectionId: string; code?: string; onlyAccount?: boolean },
 ) {
   const existing = await deps.prisma.connection.findFirst({
     where: {
@@ -538,6 +589,12 @@ export async function completeConnection(
             excludeIds.push(resolvedSiblingId);
           }
           resolvedAccountId = await resolveAccountId(current.providerRef, excludeIds);
+          if (
+            input.onlyAccount &&
+            resolvedAccountId &&
+            (await resolveAccountId(current.providerRef, [...excludeIds, resolvedAccountId]))
+          )
+            return current;
         }
 
         // When a resolver exists and providerRef is still a request-scoped
@@ -572,6 +629,8 @@ export async function completeConnection(
             return current;
           }
         }
+        // A connected row only ever gains its account id here; with none to add, leave it as is.
+        if (current.status === "connected" && providerRef === current.providerRef) return current;
         // Catalog reconciliation does not take the provider lock, so it may have
         // connected this row meanwhile; only the call that changes it records the event.
         const updated = await tx.connection.updateMany({
