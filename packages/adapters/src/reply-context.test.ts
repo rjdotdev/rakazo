@@ -134,6 +134,23 @@ describe("reply context", () => {
     expect(prompt).toContain("Test message 1/3: Hello!");
   });
 
+  it("keeps a bot reply's tool steps in its own history, but not in a quote of it", async () => {
+    const note = "n".repeat(25_000);
+    const reply = {
+      ...target,
+      blocks: [
+        { kind: "steps", steps: [{ label: "Computer shell", count: 1, note }] },
+        { kind: "text", text: "Installed." },
+      ],
+    };
+    expect(messageToAgentHistoryText(reply)).toBe(`${note}\n[used Computer shell]\nInstalled.`);
+    const context = await loadReplyContext(harness(reply).prisma, "thread-1", "user-reply");
+    // Long notes would otherwise push the answer past the quote's cut.
+    expect(context).toContain("Installed.");
+    expect(context).not.toContain("Computer shell");
+    expect(context).not.toContain('"truncated":true');
+  });
+
   it("preserves reply context in historical messages", () => {
     const text = messageToAgentHistoryText({
       id: "reply",

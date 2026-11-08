@@ -275,6 +275,44 @@ describe("attachment helpers", () => {
   });
 });
 
+describe("tool step history", () => {
+  it("keeps the tools an earlier reply used in order, one line per stretch between its notes", () => {
+    expect(
+      blocksToAgentHistoryText(
+        [
+          {
+            kind: "steps",
+            steps: [
+              {
+                label: "Computer shell",
+                count: 2,
+                note: "Installing the password manager extension.",
+              },
+              { label: "Browser screenshot", count: 1 },
+              { label: "Computer shell", count: 1 },
+              { label: "Browser screenshot", count: 1, note: "Checking it loaded." },
+            ],
+          },
+          { kind: "text", text: "Done, it works." },
+        ],
+        { steps: true },
+      ),
+    ).toBe(
+      "Installing the password manager extension.\n[used Computer shell ×2, Browser screenshot, Computer shell]\nChecking it loaded.\n[used Browser screenshot]\nDone, it works.",
+    );
+  });
+
+  it("caps a line of alternating tools and counts the calls it leaves out", () => {
+    const steps = Array.from({ length: 11 }, (_, i) => ({
+      label: i % 2 === 0 ? "Shell" : "Screenshot",
+      count: i === 10 ? 3 : 1,
+    }));
+    expect(blocksToAgentHistoryText([{ kind: "steps", steps }], { steps: true })).toBe(
+      "[used Shell, Screenshot, Shell, Screenshot, Shell, Screenshot, Shell, Screenshot, … +5 more]",
+    );
+  });
+});
+
 describe("peer message history", () => {
   it("keeps attribution so a later turn knows a bot spoke, not the user", () => {
     expect(

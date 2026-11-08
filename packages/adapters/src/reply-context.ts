@@ -56,7 +56,10 @@ function replyContext(source: ReplyMessage, threadId: string): string | undefine
 }
 
 export function messageToAgentHistoryText(message: ReplyMessage): string {
-  return [replyContext(message, message.threadId), blocksToAgentHistoryText(messageBlocks(message))]
+  return [
+    replyContext(message, message.threadId),
+    blocksToAgentHistoryText(messageBlocks(message), { steps: true }),
+  ]
     .filter(Boolean)
     .join("\n\n");
 }
