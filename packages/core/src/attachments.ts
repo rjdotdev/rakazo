@@ -8,6 +8,7 @@ import {
   isAttachmentImageMimeType,
 } from "@rakazo/contracts";
 import { isApprovalAskBlock, isSecretAskBlock } from "./action-approval.js";
+import type { ToolStep } from "./events.js";
 
 export class AttachmentValidationError extends Error {
   constructor(message: string) {
@@ -165,6 +166,27 @@ export function promptTextForAttachments(
   return [caption, ...notes].filter(Boolean).join("\n\n") || "See attached files.";
 }
 
+/** Tools used between notes, one line per stretch, so a long run of steps stays one line. */
+function stepsHistoryText(steps: readonly ToolStep[]): string {
+  const lines: string[] = [];
+  let counts = new Map<string, number>();
+  const flush = () => {
+    if (counts.size === 0) return;
+    const used = [...counts].map(([label, count]) => (count > 1 ? `${label} ×${count}` : label));
+    lines.push(`[used ${used.join(", ")}]`);
+    counts = new Map();
+  };
+  for (const step of steps) {
+    if (step.note) {
+      flush();
+      lines.push(step.note);
+    }
+    counts.set(step.label, (counts.get(step.label) ?? 0) + step.count);
+  }
+  flush();
+  return lines.join("\n");
+}
+
 export function blocksToAgentHistoryText(blocks: MessageBlock[]): string {
   return blocks
     .map((block) => {
@@ -172,6 +194,9 @@ export function blocksToAgentHistoryText(blocks: MessageBlock[]): string {
       if (block.kind === "chart") return `[chart: ${block.name}]`;
       if (block.kind === "app") return `[app: ${block.server} showed ${block.tool}]`;
       if (block.kind === "image") return `[image: ${block.name}]`;
+      // Without its steps and the notes written before them, a later turn forgets which tools
+      // it used and what it said it was doing.
+      if (block.kind === "steps") return stepsHistoryText(block.steps);
       // The id lets a later turn, or another chat, update this page instead of making a new one.
       if (block.kind === "page") {
         return `[page: ${block.title} (pageId ${block.pageId}, version ${block.version})]`;
