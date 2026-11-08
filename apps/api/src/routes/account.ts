@@ -161,23 +161,19 @@ export function accountRoutes(ctx: RouterContext) {
       update: authed.preferences.update.handler(async ({ context, input }): Promise<Me> => {
         const userId = context.actor.userId;
         const botAvatarSet = input.botAvatarSet;
+        // An avatar style from an older app is accepted and ignored: there is only one.
+        const data = {
+          ...(input.locale === undefined ? {} : { locale: input.locale }),
+          ...(botAvatarSet === undefined ? {} : { botAvatarSet }),
+          ...(input.botListOrder === undefined ? {} : { botListOrder: input.botListOrder }),
+        };
         if (input.timezone !== undefined) {
           // The routines that took the account zone keep their local schedule in the new
           // one, and the other fields commit in the same save. The move's row lock still
           // waits for any bot creation holding the user row, so no new bot is missed below.
-          await changeUserTimezone(deps, userId, input.timezone, {
-            ...(input.locale === undefined ? {} : { locale: input.locale }),
-            ...(botAvatarSet === undefined ? {} : { botAvatarSet }),
-          });
+          await changeUserTimezone(deps, userId, input.timezone, data);
         } else {
-          await deps.prisma.user.update({
-            where: { id: userId },
-            // An avatar style from an older app is accepted and ignored: there is only one.
-            data: {
-              ...(input.locale === undefined ? {} : { locale: input.locale }),
-              ...(botAvatarSet === undefined ? {} : { botAvatarSet }),
-            },
-          });
+          await deps.prisma.user.update({ where: { id: userId }, data });
         }
         if (botAvatarSet !== undefined) {
           // Every bot of this user not pinned to another set follows the new default, in every

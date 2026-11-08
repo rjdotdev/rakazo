@@ -19,6 +19,7 @@ import { ensureOrganizations } from "./organizations";
 import { forgetReferrals, rememberReferral } from "./referral";
 import { saveInbox } from "./saved-chats";
 import { currentSessionGeneration } from "./session";
+import { botListOrderStore } from "./use-bot-list-order";
 import type { LoadFailureKind } from "./user-error";
 import { errorText, loadFailureKind } from "./user-error";
 
@@ -51,6 +52,7 @@ export function useHomeInbox(
     const badgeGeneration = appBadgeGeneration();
     if (spaceActionRef.current.busy || spaceActionRef.current.recoveryId) return;
     const requestId = ++inboxRequestId.current;
+    const orderSince = botListOrderStore.begin();
     const apiBase = currentApiBase();
     const generation = currentSessionGeneration();
     setError(null);
@@ -95,6 +97,7 @@ export function useHomeInbox(
       setGroups((current) => retainInboxValue(current, navigation.current.groups));
       setSpaces((current) => retainInboxValue(current, navigation.spaces));
       setMe((current) => retainInboxValue(current, nextMe));
+      botListOrderStore.serverSaid(nextMe.botListOrder, orderSince);
       // Emails follow the app's language, so the account keeps the one this app runs in. Once
       // per account and launch: polls must not undo a language picked on another device since.
       // A server that predates it leaves `locale` out.

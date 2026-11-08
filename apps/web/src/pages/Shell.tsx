@@ -21,6 +21,7 @@ import {
   isRunWorking,
   memberName,
   newClientId,
+  orderBotsForSidebar,
   otherAuthor,
   workingRoutineName,
 } from "@rakazo/core";
@@ -48,6 +49,7 @@ import { PageViewHost } from "../components/pages/PageViewHost";
 import type { ArtifactTarget } from "../lib/artifact-open";
 import { authClient } from "../lib/auth";
 import { peekBootstrapSeed } from "../lib/bootstrap";
+import { chooseBotListOrder, useBotListOrder } from "../lib/bot-list-order";
 import { botsSidebarDensityPreference } from "../lib/bots-sidebar-density-pref";
 import { readBotsSidebarCollapsed, writeBotsSidebarCollapsed } from "../lib/bots-sidebar-pref";
 import { setCallMinimized, startCall, useCallSession } from "../lib/call-session";
@@ -316,13 +318,17 @@ function SpaceShell() {
     return rpc.computer.dismissDiskWarning({ botId }).catch(() => undefined);
   };
   useReportedUiLocale(rpc, bootstrapMe?.locale);
+  const botListOrder = useBotListOrder();
   const cycleBots = useMemo(
     () =>
       groupBotsForSidebar(
-        bots.filter((bot) => !chatSnoozed(bot, snoozeNow)),
+        orderBotsForSidebar(
+          bots.filter((bot) => !chatSnoozed(bot, snoozeNow)),
+          botListOrder,
+        ),
         botSections,
       ).flatMap((group) => group.bots),
-    [bots, botSections, snoozeNow],
+    [bots, botSections, snoozeNow, botListOrder],
   );
   const dialogs = useShellDialogs();
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -571,8 +577,9 @@ function SpaceShell() {
         miniSidebar ? "" : search.query,
         { pinned: t`Pinned`, unassigned: t`Unassigned` },
         snoozeNow,
+        botListOrder,
       ),
-    [sidebarSpaces, search.query, miniSidebar, t, snoozeNow],
+    [sidebarSpaces, search.query, miniSidebar, t, snoozeNow, botListOrder],
   );
   // The Dock badge ignores the roster search box: a filter must not hide unread chats.
   const unreadChatCount = useMemo(
@@ -762,6 +769,7 @@ function SpaceShell() {
   const rosterDrop = useRosterDrop({
     rpc,
     bots,
+    botListOrder,
     reorderRosterBot: roster.reorderRosterBot,
     refreshBots,
     refreshGroupThread: (id) => refreshGroupThreadRef.current(id),
@@ -979,6 +987,7 @@ function SpaceShell() {
             botMenu={botMenu}
             setBotMenu={setBotMenu}
             reorderRosterBot={roster.reorderRosterBot}
+            botListOrder={botListOrder}
             activeSnapshot={activeSnapshot}
             botMenuContent={botMenuContent}
           />
@@ -1316,6 +1325,8 @@ function SpaceShell() {
           closeMobileSidebar={() => setMobileSidebarOpen(false)}
           createBot={createBot}
           botAvatarSet={bootstrapMe?.botAvatarSet ?? DEFAULT_NEW_BOT_AVATAR_SET}
+          botListOrder={botListOrder}
+          setBotListOrder={chooseBotListOrder}
           discardChatAttachments={composer.discardThreadAttachments}
           clearOpenThread={() => {
             thread.resetHistory();

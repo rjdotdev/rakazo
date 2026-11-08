@@ -6,7 +6,7 @@ import type { Prisma, PrismaClient } from "./client.js";
 import { expireComputerExecutionLeases, restoreBotUnderComputerQuota } from "./computers.js";
 import { transientRunEventsWhere } from "./events.js";
 import { deletePageShareSecrets } from "./page-shares.js";
-import { withNewestThreadMessages } from "./preview-messages.js";
+import { newestThreadMessageTimes, withNewestThreadMessages } from "./preview-messages.js";
 import { IsolationError } from "./scope.js";
 import { lockSpaceForContentCreation } from "./spaces.js";
 import {
@@ -31,7 +31,9 @@ type GroupRecord = {
   thread: {
     id: string;
     reads: Array<{ unread: boolean; snoozedUntil: Date | null }>;
-    messages: Array<{ blocks: unknown }>;
+    messages: Array<{ blocks: unknown; createdAt: Date }>;
+    /** Newest message from a person or a bot; absent where a list doesn't read it. */
+    lastMessageAt?: Date | null;
   } | null;
   members: Array<{
     bot: {
@@ -46,11 +48,13 @@ type GroupRecord = {
 
 type SpaceGroupRecord = Pick<
   GroupRecord,
-  "id" | "spaceId" | "name" | "pinned" | "sectionId" | "updatedAt" | "members"
+  "id" | "spaceId" | "name" | "pinned" | "sectionId" | "updatedAt" | "createdAt" | "members"
 > & {
   thread: {
     reads: Array<{ unread: boolean; snoozedUntil: Date | null }>;
-    messages: Array<{ blocks: unknown }>;
+    messages: Array<{ blocks: unknown; createdAt: Date }>;
+    /** Newest message from a person or a bot; absent where a list doesn't read it. */
+    lastMessageAt?: Date | null;
   } | null;
 };
 
@@ -62,6 +66,12 @@ function mapGroupMembers(members: GroupRecord["members"]): GroupMember[] {
     avatarSet: resolveBotAvatarSet(member.bot.avatarSet),
     status: primaryActiveRun(member.bot.runs)?.status ?? "idle",
   }));
+}
+
+function lastMessageAtOf(thread: { lastMessageAt?: Date | null }) {
+  return thread.lastMessageAt === undefined
+    ? undefined
+    : (thread.lastMessageAt?.toISOString() ?? null);
 }
 
 function mapGroup(group: GroupRecord): Group {
@@ -79,6 +89,7 @@ function mapGroup(group: GroupRecord): Group {
     preview,
     unread: unreadFor(group.thread),
     snoozedUntil: snoozedUntilFor(group.thread),
+    lastMessageAt: lastMessageAtOf(group.thread),
     updatedAt: group.updatedAt.toISOString(),
     createdAt: group.createdAt.toISOString(),
   };
@@ -96,7 +107,9 @@ function mapSpaceGroup(group: SpaceGroupRecord): SpaceGroup {
     preview: previewFromBlocks(group.thread.messages[0]?.blocks),
     unread: unreadFor(group.thread),
     snoozedUntil: snoozedUntilFor(group.thread),
+    lastMessageAt: lastMessageAtOf(group.thread),
     updatedAt: group.updatedAt.toISOString(),
+    createdAt: group.createdAt.toISOString(),
   };
 }
 
@@ -297,12 +310,39 @@ async function attachNewestGroupMessage<T extends { thread: { id: string } | nul
   group: T,
 ) {
   if (!group.thread) return group;
-  const messages = await client.message.findMany({
-    where: { threadId: group.thread.id },
-    orderBy: { seq: "desc" },
-    take: 1,
-  });
-  return { ...group, thread: { ...group.thread, messages } };
+  const [messages, times] = await Promise.all([
+    client.message.findMany({
+      where: { threadId: group.thread.id },
+      orderBy: { seq: "desc" },
+      take: 1,
+    }),
+    newestThreadMessageTimes(client, [group.thread.id]),
+  ]);
+  return {
+    ...group,
+    thread: { ...group.thread, messages, lastMessageAt: times.get(group.thread.id) ?? null },
+  };
+}
+
+/** A list's newest previews and, beside them, each group's newest real message time. */
+async function withGroupActivity<T extends { thread: { id: string } | null }>(
+  prisma: PrismaClient,
+  groups: T[],
+  limit: number,
+) {
+  const [withPreviews, times] = await Promise.all([
+    withNewestThreadMessages(prisma, groups, limit),
+    newestThreadMessageTimes(
+      prisma,
+      groups.flatMap((group) => (group.thread ? [group.thread.id] : [])),
+    ),
+  ]);
+  return withPreviews.map((group) => ({
+    ...group,
+    thread: group.thread
+      ? { ...group.thread, lastMessageAt: times.get(group.thread.id) ?? null }
+      : null,
+  }));
 }
 
 export function createGroupRepos(prisma: PrismaClient) {
@@ -311,7 +351,7 @@ export function createGroupRepos(prisma: PrismaClient) {
     userId: string,
   ): Promise<SpaceGroup[]> {
     if (spaceIds.length === 0) return [];
-    const groups = await withNewestThreadMessages(
+    const groups = await withGroupActivity(
       prisma,
       await prisma.chatGroup.findMany({
         where: {
@@ -325,6 +365,7 @@ export function createGroupRepos(prisma: PrismaClient) {
           pinned: true,
           sectionId: true,
           updatedAt: true,
+          createdAt: true,
           thread: { select: { id: true, reads: readStateFor(userId) } },
           members: groupMembersInclude,
         },
@@ -369,7 +410,7 @@ export function createGroupRepos(prisma: PrismaClient) {
   return {
     async listGroups(actor: Actor, options: { archived?: boolean } = {}): Promise<Group[]> {
       if (options.archived) return listArchivedGroups(actor);
-      const groups = await withNewestThreadMessages(
+      const groups = await withGroupActivity(
         prisma,
         await prisma.chatGroup.findMany({
           where: {

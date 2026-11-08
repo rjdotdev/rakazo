@@ -2,6 +2,7 @@ import { useLingui } from "@lingui/react/macro";
 import type {
   AppBootstrap,
   Bot,
+  BotListOrder,
   BotSection,
   ComputerStatus,
   Group,
@@ -15,6 +16,7 @@ import type { RefObject } from "react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { takeInitialBootstrap } from "../../lib/bootstrap";
 import { linkedBotRoute } from "../../lib/bootstrap-target";
+import { botListOrder } from "../../lib/bot-list-order";
 import { localTimezone } from "../../lib/local-timezone";
 import { markOnce } from "../../lib/performance";
 import type { ChatTarget } from "../../lib/query";
@@ -80,6 +82,7 @@ export function useSpaceRoster({
       const botOrderEpoch = botOrderEpochRef.current;
       const preserveBotOrder = savingBotOrderRef.current || pendingBotOrderRef.current !== null;
       const archivedRequest = includeArchived ? ++archivedBotsRefreshEpoch.current : null;
+      const since = botListOrder.begin();
       botsRefreshInFlight.current += 1;
       try {
         const [navigation, archived, archivedGroupList] = await Promise.all([
@@ -111,6 +114,8 @@ export function useSpaceRoster({
         setBotSections((previous) => replaceEqualDeep(previous, sections));
         setGroups((previous) => replaceEqualDeep(previous, groupList));
         setSpaces((previous) => replaceEqualDeep(previous, navigation.spaces));
+        // The poll carries the account's order too, so a change on another device shows here.
+        botListOrder.serverSaid(navigation.botListOrder, since);
         setInitialBotsLoaded(true);
         botsRefreshApplied.current = request;
         if (
@@ -174,6 +179,10 @@ export function useSpaceRoster({
     (sourceId: string, targetId: string, groupBotIds: string[]) => {
       if (!groupBotIds.includes(sourceId) || !groupBotIds.includes(targetId)) return;
       const current = botsRef.current;
+      // Checked when the move lands, not when it started: Recent lists by time, so only Pinned,
+      // which keeps its drag order, can be reordered there.
+      if (botListOrder.get() === "recent" && !current.find((bot) => bot.id === sourceId)?.pinned)
+        return;
       const reordered = reorderBotTo(current, sourceId, targetId);
       if (reordered === current) return;
       const next = [...reordered];
@@ -335,6 +344,7 @@ export function useSpaceBootstrap({
   useEffect(() => {
     let cancelled = false;
     const appliedAtStart = botsRefreshApplied.current;
+    const since = botListOrder.begin();
     void takeInitialBootstrap(botId ?? startChat?.botId)
       .then((bootstrap) => {
         // Kept for the space it belongs to, so switching back to it can paint at once.
@@ -342,6 +352,7 @@ export function useSpaceBootstrap({
         if (cancelled) return;
         const groupList = bootstrap.groups;
         setBootstrapMe(bootstrap.me);
+        botListOrder.serverSaid(bootstrap.me.botListOrder, since);
         // First sign-in with no saved timezone: adopt this browser's, once. A choice made
         // in Settings is never overwritten; a failure just leaves bots on UTC.
         if (bootstrap.me.timezone === null) {
@@ -460,6 +471,7 @@ export function useSpaceBootstrap({
 export function useRosterDrop({
   rpc,
   bots,
+  botListOrder,
   reorderRosterBot,
   refreshBots,
   refreshGroupThread,
@@ -468,6 +480,7 @@ export function useRosterDrop({
 }: {
   rpc: ReturnType<typeof createSpaceRpc>;
   bots: Bot[];
+  botListOrder: BotListOrder | undefined;
   reorderRosterBot: SpaceRoster["reorderRosterBot"];
   refreshBots: () => Promise<void>;
   refreshGroupThread: (groupId: string) => Promise<ThreadSnapshot>;
@@ -481,8 +494,10 @@ export function useRosterDrop({
   const draggedBot = draggedBotId ? bots.find((bot) => bot.id === draggedBotId) : undefined;
   const rosterDropAction = useCallback(
     (target: RosterDropTarget, sameList: boolean) =>
-      draggedBot ? resolveRosterDrop({ dragged: draggedBot, target, sameList }) : null,
-    [draggedBot],
+      draggedBot
+        ? resolveRosterDrop({ dragged: draggedBot, target, sameList, order: botListOrder })
+        : null,
+    [draggedBot, botListOrder],
   );
   const applyRosterDrop = useCallback(
     (target: RosterDropTarget, sameList: boolean, groupBotIds: string[]) => {

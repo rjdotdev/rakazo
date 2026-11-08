@@ -29,7 +29,7 @@ export type SavedInbox = {
   groups: MobileGroup[];
   botSections: MobileBotSection[];
   spaces: MobileSpace[];
-  me: Pick<MobileMe, "userId" | "spaceId" | "name">;
+  me: Pick<MobileMe, "userId" | "spaceId" | "name" | "botListOrder">;
 };
 
 export const SAVED_CHAT_MESSAGES = 100;
@@ -123,6 +123,8 @@ export function writeSavedInbox(
           notifyOnFinish,
           threadId,
           updatedAt,
+          lastMessageAt,
+          createdAt,
         }) =>
           ({
             id,
@@ -139,6 +141,8 @@ export function writeSavedInbox(
             notifyOnFinish,
             threadId,
             updatedAt,
+            lastMessageAt,
+            createdAt,
           }) as MobileBot,
       ),
       groups: navigation.current.groups.slice(0, SAVED_INBOX_ROWS).map(
@@ -153,6 +157,8 @@ export function writeSavedInbox(
           spaceId,
           sectionId,
           updatedAt,
+          lastMessageAt,
+          createdAt,
         }) =>
           ({
             id,
@@ -165,6 +171,8 @@ export function writeSavedInbox(
             pinned,
             spaceId,
             updatedAt,
+            lastMessageAt,
+            createdAt,
           }) as MobileGroup,
       ),
       botSections: navigation.current.botSections.slice(0, SAVED_INBOX_ROWS),
@@ -174,7 +182,7 @@ export function writeSavedInbox(
         groups: space.groups.slice(0, SAVED_INBOX_ROWS),
         externalConversations: [],
       })),
-      me: { userId: me.userId, spaceId: me.spaceId, name: me.name },
+      me: { userId: me.userId, spaceId: me.spaceId, name: me.name, botListOrder: me.botListOrder },
     };
     if (!isIntegrationsScopeCurrent(scope) || me.userId !== scope.userId) return;
     writeSavedFile(scope, "inbox", { key: scopeKey(scope, "inbox"), inbox });

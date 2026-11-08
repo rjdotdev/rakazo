@@ -1,3 +1,5 @@
+import type { BotListOrder } from "@rakazo/contracts";
+
 export type BotListSection<T> = {
   key: string;
   title: string | null;
@@ -51,6 +53,34 @@ export function groupBotsForSidebar<T extends SectionedBot>(
   }
 
   return grouped;
+}
+
+type ActiveChat = { lastMessageAt?: string | null; createdAt?: string; updatedAt?: string };
+
+/**
+ * When a chat last moved, as its row shows it and Recent sorts it: its newest real message, or
+ * when it was created before its first. A server without `lastMessageAt` keeps its row time.
+ */
+export function chatActivityAt(chat: ActiveChat): string | undefined {
+  if (chat.lastMessageAt === undefined) return chat.updatedAt;
+  return chat.lastMessageAt ?? chat.createdAt ?? chat.updatedAt;
+}
+
+/**
+ * In Recent, each section lists its chats newest activity first; ties keep the drag order and
+ * Pinned keeps its drag order. Run it before grouping.
+ */
+export function orderBotsForSidebar<T extends SectionedBot & ActiveChat>(
+  bots: readonly T[],
+  order: BotListOrder | undefined,
+): readonly T[] {
+  if (order !== "recent") return bots;
+  const time = (bot: T) => Date.parse(chatActivityAt(bot) ?? "") || 0;
+  // Grouping lifts Pinned out on its own, so it can lead here.
+  return [
+    ...bots.filter((bot) => bot.pinned),
+    ...bots.filter((bot) => !bot.pinned).sort((a, b) => time(b) - time(a)),
+  ];
 }
 
 export function reorderBotTo<T extends { id: string }>(

@@ -80,6 +80,14 @@ export const InstructionVersionSchema = z.object({
   createdAt: z.string(),
 });
 
+/** How a person lists their chats: their drag order, or newest message first. */
+export const BotListOrderSchema = z.enum(["manual", "recent"]);
+export type BotListOrder = z.infer<typeof BotListOrderSchema>;
+
+export function resolveBotListOrder(value?: string | null): BotListOrder {
+  return value === "recent" ? "recent" : "manual";
+}
+
 export const BotSchema = z.object({
   id: Id,
   spaceId: Id,
@@ -105,6 +113,12 @@ export const BotSchema = z.object({
   status: z.string(),
   threadStatus: z.string().optional(),
   runErrorId: Id.nullable().default(null),
+  /**
+   * The newest message from a person or the bot in its chat, its recent helpers' threads or its
+   * most recently active outside conversations; null before the first. Absent from servers that
+   * predate it.
+   */
+  lastMessageAt: z.string().nullable().optional(),
   computerMode: ComputerModeSchema,
   updatedAt: z.string(),
   createdAt: z.string(),
@@ -217,6 +231,8 @@ export const GroupSchema = z.object({
   unread: z.boolean(),
   /** Hidden from the viewer's chat list until then; past, the chat has just woken. */
   snoozedUntil: z.string().nullable().optional(),
+  /** The newest message in the group, or null before its first. Absent from older servers. */
+  lastMessageAt: z.string().nullable().optional(),
   updatedAt: z.string(),
   createdAt: z.string(),
 });
@@ -283,8 +299,9 @@ export const SpaceBotSchema = BotSchema.pick({
   status: true,
   threadStatus: true,
   runErrorId: true,
+  lastMessageAt: true,
   updatedAt: true,
-});
+}).extend({ createdAt: z.string().optional() });
 export type SpaceBot = z.infer<typeof SpaceBotSchema>;
 
 export const SpaceGroupSchema = GroupSchema.pick({
@@ -297,8 +314,9 @@ export const SpaceGroupSchema = GroupSchema.pick({
   preview: true,
   unread: true,
   snoozedUntil: true,
+  lastMessageAt: true,
   updatedAt: true,
-});
+}).extend({ createdAt: z.string().optional() });
 export type SpaceGroup = z.infer<typeof SpaceGroupSchema>;
 
 export const TEAM_CHAT_RULES_MAX_LENGTH = 4000;
@@ -435,6 +453,11 @@ export const SpaceNavigationSchema = z.object({
     botSections: z.array(BotSectionSchema),
   }),
   spaces: z.array(SpaceSchema),
+  /**
+   * The member's sidebar order, so an open window follows a change made on another device.
+   * Absent from servers that predate it.
+   */
+  botListOrder: BotListOrderSchema.optional(),
 });
 export type SpaceNavigation = z.infer<typeof SpaceNavigationSchema>;
 
@@ -1478,6 +1501,8 @@ export const MeSchema = z.object({
   avatarStyle: AvatarStyleSchema,
   /** The icon set new and unpinned bots wear. Absent from servers that predate it. */
   botAvatarSet: BotAvatarSetSchema.optional(),
+  /** How the sidebar lists chats on every device. Absent from servers that predate it. */
+  botListOrder: BotListOrderSchema.optional(),
   /**
    * The user's IANA timezone, or null when unset (bots then see UTC only).
    * Absent from servers that predate it.

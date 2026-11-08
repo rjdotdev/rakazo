@@ -13,6 +13,7 @@ describe("listSpaceGroupsForSpaces", () => {
         pinned: true,
         sectionId: null,
         updatedAt: new Date("2026-08-20T00:00:00.000Z"),
+        createdAt: new Date("2026-08-01T00:00:00.000Z"),
         thread: {
           id: "thread-1",
           reads: [{ unread: true, snoozedUntil: new Date("2026-08-21T09:00:00.000Z") }],
@@ -44,7 +45,7 @@ describe("listSpaceGroupsForSpaces", () => {
           replyQuote: null,
           runId: null,
           clientNonce: null,
-          createdAt: new Date("2026-08-20T00:00:00.000Z"),
+          createdAt: new Date("2026-08-19T12:00:00.000Z"),
         },
       ]),
     } as unknown as PrismaClient);
@@ -69,13 +70,14 @@ describe("listSpaceGroupsForSpaces", () => {
         preview: "Escalation pending",
         unread: true,
         snoozedUntil: "2026-08-21T09:00:00.000Z",
+        lastMessageAt: "2026-08-19T12:00:00.000Z",
         updatedAt: "2026-08-20T00:00:00.000Z",
+        createdAt: "2026-08-01T00:00:00.000Z",
       },
     ]);
     const query = findMany.mock.calls[0]![0];
     expect(query.select).not.toHaveProperty("userId");
     expect(query.select).not.toHaveProperty("archivedAt");
-    expect(query.select).not.toHaveProperty("createdAt");
   });
 });
 
@@ -458,7 +460,7 @@ describe("createGroup", () => {
       ],
     };
     const tx = {
-      $queryRaw: vi.fn(),
+      $queryRaw: vi.fn(async () => []),
       spaceMember: {
         findUnique: vi.fn(async () => ({
           organizationId: "org-1",

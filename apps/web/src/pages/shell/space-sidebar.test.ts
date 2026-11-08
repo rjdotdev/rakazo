@@ -140,6 +140,37 @@ describe("sidebarGroupsForSpaces", () => {
       sidebarGroupsForSpaces([space("space-1", "Personal", { canRename: true })], "missing"),
     ).toEqual([]);
   });
+
+  it("lists each section's chats newest first in Recent, Pinned and sections keeping theirs", () => {
+    const at = (minute: number) => new Date(Date.UTC(2026, 10, 8, 9, minute)).toISOString();
+    const sent = (id: string, minute: number) => ({ ...chat(id, id), lastMessageAt: at(minute) });
+    const roster = {
+      ...space("space-1", "Personal"),
+      bots: [
+        { ...sent("pin-a", 1), pinned: true },
+        { ...sent("pin-b", 5), pinned: true },
+        { ...sent("work-a", 2), sectionId: "work" },
+        // Never messaged: its creation time counts, not its last change.
+        {
+          ...chat("work-b", "work-b"),
+          sectionId: "work",
+          lastMessageAt: null,
+          createdAt: at(3),
+          updatedAt: at(0),
+        },
+        sent("loose-a", 3),
+        sent("loose-b", 6),
+      ],
+      groups: [sent("team", 4)],
+      botSections: [{ id: "work", name: "Work" }],
+    };
+    const groups = sidebarGroupsForSpaces([roster], "", undefined, Date.now(), "recent");
+    expect(groups.map((group) => group.bots.map((item) => item.chat.id))).toEqual([
+      ["pin-a", "pin-b"],
+      ["work-b", "work-a"],
+      ["loose-b", "team", "loose-a"],
+    ]);
+  });
 });
 
 describe("commitSpaceRename", () => {

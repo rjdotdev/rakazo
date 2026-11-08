@@ -62,6 +62,7 @@ vi.mock("expo-router", () => {
 });
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
 vi.mock("./material-icons", () => ({ materialIcons: {} }));
+vi.mock("./use-bot-list-order", () => ({ useBotListOrder: () => undefined }));
 vi.mock("../components/native-symbol", () => ({ NativeSymbol: () => null }));
 vi.mock("./appearance", () => ({
   mobileTokens: () => ({}),

@@ -79,6 +79,7 @@ export async function startBackgroundHelper(
   if (Boolean(input.modelProvider) !== Boolean(input.modelId)) {
     return { error: "model_provider and model_id must both be set" };
   }
+  // The effect key leads with this run's id; the roster reads it to leave out helpers ticket work starts.
   const clientNonce = `background-helper:${input.effectKey}`;
   const started = { ok: true as const, name: input.name, note: startedNote(input.name) };
   const card: HelperBlock = {

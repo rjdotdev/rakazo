@@ -5,13 +5,19 @@ vi.mock("./rpc", () => {
   // Any procedure path, as the real client exposes; these tests never call one.
   const client = (): unknown => new Proxy(() => undefined, { get: () => client() });
   return {
-    rpc: client(),
+    // The sidebar order's save, left in flight so a choice stays held.
+    rpc: {
+      preferences: {
+        update: () => new Promise(() => {}),
+      },
+    },
     createSpaceRpc: client,
     rpcForSpace: client,
     selectedSpaceId: () => null,
   };
 });
 
+import { botListOrder } from "./bot-list-order";
 import {
   lastChatKey,
   lastChatOf,
@@ -67,6 +73,18 @@ describe("query scopes", () => {
     queryClient.setQueryData(key, { ready: true } as never);
     setQueryUser("user-b");
     expect(queryClient.getQueryData(key)).toBeUndefined();
+  });
+
+  it("forgets the sidebar order the previous user chose", () => {
+    setQueryUser("user-a");
+    botListOrder.serverSaid("manual");
+    botListOrder.choose("recent", () => {});
+    expect(botListOrder.get()).toBe("recent");
+    setQueryUser("user-b");
+    expect(botListOrder.get()).toBeUndefined();
+    // The next account's own order shows: the previous user's save no longer holds it back.
+    botListOrder.serverSaid("manual");
+    expect(botListOrder.get()).toBe("manual");
   });
 });
 

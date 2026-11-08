@@ -246,6 +246,49 @@ describe("spaceInboxItems", () => {
     expect(items[0]).toMatchObject({ type: "bot", bot });
   });
 
+  it("passes the Recent order to each section, groups included", () => {
+    const at = (day: string) => `2026-03-${day}T00:00:00.000Z`;
+    const group = { id: "group", name: "Planning", preview: "", pinned: false, sectionId: null };
+    const section = { id: "s", name: "Research", position: 0, createdAt: at("01") };
+    const work = space({
+      bots: [
+        { ...bot, id: "p-old", pinned: true, lastMessageAt: at("01") },
+        { ...bot, id: "p-new", pinned: true, lastMessageAt: at("09") },
+        { ...bot, id: "s-old", sectionId: "s", lastMessageAt: at("02") },
+        { ...bot, id: "s-new", sectionId: "s", lastMessageAt: at("08") },
+        { ...bot, id: "u-old", lastMessageAt: at("03") },
+      ],
+      groups: [
+        {
+          ...group,
+          archivedAt: null,
+          unread: false,
+          updatedAt: at("01"),
+          lastMessageAt: at("04"),
+          members: [],
+        },
+      ],
+      botSections: [{ ...section, updatedAt: at("01") }],
+    });
+    const items = spaceInboxItems([work], new Set(), undefined, Date.now(), "recent");
+    expect(
+      items.map((item) =>
+        item.type === "heading" ? item.title : item.type === "bot" ? item.bot.id : item.type,
+      ),
+    ).toEqual([
+      "Work",
+      "Pinned",
+      "p-old",
+      "p-new",
+      "Research",
+      "s-new",
+      "s-old",
+      "Unassigned",
+      "group",
+      "u-old",
+    ]);
+  });
+
   it("lists created bots as peers in roster order, ignoring saved parent collapse state", () => {
     const chief = { ...bot, id: "chief", parentBotId: null };
     const created = { ...bot, id: "created", parentBotId: "chief" };
