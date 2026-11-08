@@ -365,6 +365,7 @@ export function resetDesktopRuntimeCommand(env = DEFAULT_DESKTOP_ENV) {
     ...(env.preservePrimaryDisplay
       ? [`if [ "$desktop_display" != "${env.displayStart}" ]; then`]
       : []),
+    stopScreenBusCommand(commandLayout(undefined, env).displayNumber),
     // biome-ignore lint/suspicious/noTemplateCurlyInString: generated shell parameter expansion
     'pkill -f "[X]vfb :${desktop_display} -screen" || true',
     // biome-ignore lint/suspicious/noTemplateCurlyInString: generated shell parameter expansion
@@ -415,6 +416,21 @@ function stopVncCommand(kind: "view" | "control", layout: DesktopLayout) {
     `for i in $(seq 1 10); do pgrep -f ${pattern} >/dev/null || break; sleep 0.1; done`,
     `if pgrep -f ${pattern} >/dev/null; then echo 'computer screen transport failed to stop' >&2; exit 1; fi`,
     `rm -f ${socketPrefix}*`,
+  ].join("\n");
+}
+
+/**
+ * Stop the session bus rakazo-browser starts for a screen whose display is torn down; its portal
+ * services exit with it. A kept display keeps its bus because other browsers there still use it.
+ */
+function stopScreenBusCommand(display: number | string) {
+  const pattern = quoteLayout(
+    `^dbus-daemon --session --fork --nopidfile --address=unix:path=/tmp/rakazo/dbus-display-${display}$`,
+  );
+  return [
+    `pkill -f ${pattern} || true`,
+    `for i in $(seq 1 10); do pgrep -f ${pattern} >/dev/null || break; sleep 0.1; done`,
+    `pkill -KILL -f ${pattern} || true`,
   ].join("\n");
 }
 
@@ -518,6 +534,7 @@ function renderStopExtraScreenCommand(
           ...(env.preservePrimaryDisplay
             ? [`if [ "${layout.displayNumber}" != "${env.displayStart}" ]; then`]
             : []),
+          stopScreenBusCommand(layout.displayNumber),
           `pkill -f ${quoteLayout(`[X]vfb ${layout.display} -screen`)} || true`,
           `pkill -f ${quoteLayout(`[f]luxbox -rc ${fluxHome}/.fluxbox/init`)} || true`,
           `for i in $(seq 1 20); do if ! xdpyinfo -display ${layout.display} >/dev/null 2>&1; then break; fi; sleep 0.1; done`,
