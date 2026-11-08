@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 RAKAZO_HOME="${HOME:-/home/rakazo}"
-# start.sh exports the session bus for the whole desktop; the supervisor may
-# launch this script with a minimal environment, so recover the bus address.
+# The supervisor may launch this script with a minimal environment. Recover start.sh's
+# session bus; the screen's own bus below replaces it when one can start.
 if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && [ -r /tmp/rakazo/dbus-session ]; then
   . /tmp/rakazo/dbus-session
 fi
@@ -16,6 +16,30 @@ esac
 # POSIX shell arithmetic treats a leading zero as octal.
 while [ "${DISPLAY_NUM#0}" != "$DISPLAY_NUM" ]; do DISPLAY_NUM="${DISPLAY_NUM#0}"; done
 DISPLAY_NUM="${DISPLAY_NUM:-0}"
+# A file-chooser portal draws on the display it started with. Each screen gets its own bus,
+# which starts the portal with this DISPLAY on first use, so the dialog opens where the bot works.
+if command -v dbus-daemon >/dev/null 2>&1; then
+  bus="/tmp/rakazo/dbus-display-$DISPLAY_NUM"
+  # The bus needs nss_wrapper to resolve a host UID, but screen launchers drop it for Chromium and a
+  # terminal's identity files go away with the terminal. Use the files startup wrote (image ENV).
+  bus_preload="${LD_PRELOAD:-}" bus_passwd="${NSS_WRAPPER_PASSWD:-}" bus_group="${NSS_WRAPPER_GROUP:-}"
+  if [ -r /tmp/rakazo-nss/passwd ] && [ -r /tmp/rakazo-nss/group ] && [ -r /usr/local/lib/libnss_wrapper.so ]; then
+    bus_preload="/usr/local/lib/libnss_wrapper.so${bus_preload:+:$bus_preload}"
+    bus_passwd=/tmp/rakazo-nss/passwd bus_group=/tmp/rakazo-nss/group
+  fi
+  mkdir -p /tmp/rakazo
+  (
+    flock -w 10 7 || exit 0
+    # Reuse the bus while the daemon that owns it runs, even if it is slow; replace only a dead one.
+    daemon="dbus-daemon --session --fork --nopidfile --address=unix:path=$bus"
+    [ -S "$bus" ] && pgrep -u "$(id -u)" -xf "$daemon" >/dev/null && exit 0
+    rm -f "$bus"
+    DISPLAY=":$DISPLAY_NUM" LD_PRELOAD="$bus_preload" NSS_WRAPPER_PASSWD="$bus_passwd" NSS_WRAPPER_GROUP="$bus_group" $daemon </dev/null >"$bus.log" 2>&1 7>&- || exit 0
+    # --fork can return before the socket exists; the next launch must not see a bus without one.
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do [ -S "$bus" ] && break; sleep 0.1; done
+  ) 7>"$bus.lock" || true
+  [ -S "$bus" ] && export DBUS_SESSION_BUS_ADDRESS="unix:path=$bus"
+fi
 DEBUG_PORT=$((9221 + DISPLAY_NUM))
 if [ -n "${RAKAZO_BROWSER_PROFILE:-}" ]; then
   PROFILE="$RAKAZO_BROWSER_PROFILE"
