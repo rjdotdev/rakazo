@@ -127,6 +127,8 @@ export interface AnswerRunInput {
   remember?: false;
   /** Turns down a pending secret request; only the run's user can, and nothing is stored. */
   dismiss?: boolean;
+  /** Only for a code card answered from the bot's own inbox: the email the code was read from. */
+  fromEmail?: string;
 }
 
 /** What request_secret returns to the bot once the user dismissed its card. */
@@ -154,7 +156,8 @@ export interface RunSecretWriter {
   }): Promise<void>;
 }
 
-async function findPendingAsk(
+/** The run's newest card still waiting for an answer, and the message it is on. */
+export async function findPendingAsk(
   tx: Prisma.TransactionClient,
   input: { threadId: string; runId: string },
 ) {
@@ -254,6 +257,7 @@ async function commitAnswerRunInput(
   // Login fields belong only to a login card, which cannot be saved without them.
   if (loginAsk ? !login : input.username !== undefined || input.fields !== undefined) return null;
   if (input.remember !== undefined && !loginAsk) return null;
+  if (input.fromEmail !== undefined && !code) return null;
   if (secretAsk && input.answer.length > BOT_SECRET_VALUE_MAX_LENGTH)
     throw new AnswerTooLongError();
   let approvalEffect: {

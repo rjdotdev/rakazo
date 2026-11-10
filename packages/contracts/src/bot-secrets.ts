@@ -273,6 +273,217 @@ export function normalizeOneTimeCode(answer: string): string | undefined {
     : undefined;
 }
 
+/**
+ * Whether a code can be hidden wherever it appears on its own: 6 digits or more, or letters with
+ * digits. Hiding a bare 4- or 5-digit number would blank years, prices and counts too, so only
+ * these are taken from an email, and only these are hidden bare.
+ */
+export function oneTimeCodeStandsAlone(code: string): boolean {
+  const characters = code.replaceAll("-", "");
+  return characters.length >= 6 || /[A-Za-z]/.test(characters);
+}
+
+/** Digit groups a code may be split into as an email writes it: "482 913", "4829-1375". */
+const CODE_GROUP_SIZES = [4, 3];
+const CODE_GROUP_SEPARATORS = [" ", "-"];
+
+/**
+ * Every way an email may write `code` that extractOneTimeCode reads as this code: as is, and a
+ * code of two equal digit groups split by a space or a dash. A run that holds a code taken from
+ * an email hides each of these in everything it reads (oneTimeCodeRedactions), and its emails
+ * also hide any spelling of the code (hideOneTimeCodeInEmail).
+ */
+export function oneTimeCodeWritings(code: string): string[] {
+  const writings = [code];
+  if (!/^[0-9]+$/.test(code)) return writings;
+  for (const size of CODE_GROUP_SIZES) {
+    if (code.length !== size * 2) continue;
+    for (const separator of CODE_GROUP_SEPARATORS) {
+      writings.push(`${code.slice(0, size)}${separator}${code.slice(size)}`);
+    }
+  }
+  return writings;
+}
+
+// Whitespace (no-break and other Unicode spaces too), zero-width space, dots, dashes, middle dot.
+const SPELLING_SEPARATORS = String.raw`[\s\u200b.\p{Pd}\u00b7]*`;
+
+/**
+ * Email text with `code` hidden as its characters in order, in either case, with any run of
+ * separators between them ("482 913", "4.8.2.9.1.3", one digit per line). No separator can be a
+ * code character, so a separator is read only by match attempts that start within the code's
+ * length before it: the time is linear in the text. `code` is one normalizeOneTimeCode accepted.
+ */
+export function hideOneTimeCodeInEmail(text: string, code: string): string {
+  const characters = [...code.replaceAll("-", "")];
+  if (!characters.length) return text;
+  return text.replace(new RegExp(characters.join(SPELLING_SEPARATORS), "giu"), "[redacted]");
+}
+
+// Han, kana and Hangul text puts no space around a number, so those letters may touch a code.
+const SPACELESS = String.raw`\p{sc=Han}\p{sc=Hiragana}\p{sc=Katakana}\p{sc=Hangul}`;
+// A code stands as its own word: not part of a link, an amount, a phone number or a date, so not
+// next to a letter, digit, currency sign or link punctuation, nor a digit group a space away.
+const CODE_LEAD = String.raw`(?<!(?![${SPACELESS}])[\p{L}\p{N}_+#$€£¥@/\\.,=&?%-])(?<![0-9][ .-])`;
+const CODE_TRAIL = String.raw`(?!(?![${SPACELESS}])[\p{L}\p{N}_@/\\%€$£¥]|[.,:/-][\p{L}\p{N}]| [0-9])`;
+const CODE_SEPARATORS = `[${CODE_GROUP_SEPARATORS.join("")}]`;
+const CODE_FORMS = [
+  // Two equal digit groups, as oneTimeCodeWritings writes them.
+  ...CODE_GROUP_SIZES.map((size) => `[0-9]{${size}}${CODE_SEPARATORS}[0-9]{${size}}`),
+  "[0-9]{4,8}",
+  // Capital letters and digits, both.
+  "(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*[0-9])[A-Z0-9]{6,8}",
+];
+const CODE_PATTERN = new RegExp(`${CODE_LEAD}(?:${CODE_FORMS.join("|")})${CODE_TRAIL}`, "gu");
+const YEAR = /^(?:19|20)[0-9]{2}$/;
+
+const word = (cue: string) => String.raw`(?<![\p{L}\p{M}\p{N}])(?:${cue})(?![\p{L}\p{M}])`;
+const stem = (cue: string) => String.raw`(?<![\p{L}\p{M}\p{N}])(?:${cue})`;
+/** Words that name a sign-in code, in the languages the app ships. */
+const CODE_CUE = new RegExp(
+  [
+    // Also the end of a compound, as in Bestätigungscode, pincode or passcode.
+    "code",
+    ...["otp", "pin", "2fa", "пин", "पिन"].map(word),
+    ...[
+      "verification",
+      "one[- ]?time",
+      "verifizierung",
+      "bestätigung",
+      "einmal",
+      "c[óo]digo",
+      "verificaci[óo]n",
+      "un solo uso",
+      "v[ée]rification",
+      "usage unique",
+      "verificatie",
+      "eenmalig",
+      "kod",
+      "weryfikac",
+      "jednorazow",
+      "verifica[çc][ãa]o",
+      "uso [úu]nico",
+      "код",
+      "подтвержд",
+      "верификац",
+      "одноразов",
+      "doğrulama",
+      "dogrulama",
+      "tek kullanımlık",
+      "सत्यापन",
+      "ओटीपी",
+      "एक बार",
+      "कोड",
+    ].map(stem),
+    // Hebrew joins "the" and other prefixes to the word itself.
+    "קוד",
+    "אימות",
+    "חד[- ]?פעמי",
+    "コード",
+    "認証",
+    "ワンタイム",
+    "暗証番号",
+    "코드",
+    "인증",
+    "일회용",
+    "验证",
+    "驗證",
+    "校验码",
+    "一次性",
+    "动态码",
+    "动态密码",
+    "動態密碼",
+  ].join("|"),
+  "iu",
+);
+/** Codes that are not for signing in: postal, promotional and barcodes. */
+const NOT_A_CODE_CUE = new RegExp(
+  [
+    String.raw`(?<![\p{L}\p{N}])(?:zip|postal|post|promo|promotional|discount|coupon|voucher|gift|area|country|tracking|referral|bar|rabatt|gutschein|kortings)[ -]?code`,
+    "c[óo]d(?:e|igo) (?:postal|promo)",
+    "kod (?:pocztowy|rabatowy|promocyjny)",
+    "(?:posta|indirim|promosyon) kodu",
+    "промокод",
+    "(?:クーポン|プロモーション)コード",
+    "(?:쿠폰|할인) ?코드",
+  ].join("|"),
+  "giu",
+);
+/** How far a cue may be from the number it names, on the same line. */
+const CODE_CUE_REACH = 40;
+
+const hasCodeCue = (text: string) => CODE_CUE.test(text.replace(NOT_A_CODE_CUE, " "));
+
+/**
+ * The first line with text on it going `step` (-1 up, 1 down) from the line break at `from`
+ * (up) or the line starting at `from` (down); "" when there is none.
+ */
+function nearestLineWithText(text: string, from: number, step: -1 | 1): string {
+  let at = from;
+  while (step < 0 ? at > 0 : at < text.length) {
+    const start = step < 0 ? text.lastIndexOf("\n", at - 1) + 1 : at;
+    const found = text.indexOf("\n", start);
+    const end = step < 0 ? at : found === -1 ? text.length : found;
+    const line = text.slice(start, end);
+    if (line.trim()) return line;
+    at = step < 0 ? start - 1 : end + 1;
+  }
+  return "";
+}
+
+/**
+ * Whether the number at `start`..`end` of `text` reads as a code: a cue next to it on its line,
+ * or, on a line holding nothing else, a cue in the subject or on the nearest line with text above
+ * or below it ("Order number" above it makes it no code).
+ */
+function cuedCode(text: string, start: number, end: number, subjectCued: boolean): boolean {
+  const lineStart = text.lastIndexOf("\n", start - 1) + 1;
+  const lineEnd = text.indexOf("\n", end);
+  const line = text.slice(lineStart, lineEnd === -1 ? text.length : lineEnd);
+  if (line.trim() === text.slice(start, end)) {
+    return (
+      subjectCued ||
+      hasCodeCue(nearestLineWithText(text, lineStart - 1, -1)) ||
+      (lineEnd !== -1 && hasCodeCue(nearestLineWithText(text, lineEnd + 1, 1)))
+    );
+  }
+  return hasCodeCue(
+    `${line.slice(Math.max(0, start - lineStart - CODE_CUE_REACH), start - lineStart)} ${line.slice(
+      end - lineStart,
+      end - lineStart + CODE_CUE_REACH,
+    )}`,
+  );
+}
+
+/**
+ * The one-time code an email carries, as it would be typed: digit groups joined. A number counts
+ * only with a code cue next to it on its line, in a subject that names a code, or on a line of its
+ * own with a cue in the subject or on the nearest line with text above or below. Nothing unless
+ * the email holds exactly one such code, the same one wherever it appears, so an email that also
+ * shows another number by a cue gives none rather than a guess; and nothing unless that code
+ * stands alone (oneTimeCodeStandsAlone), as a shorter one could not be hidden.
+ */
+export function extractOneTimeCode(email: { subject: string; text: string }): string | undefined {
+  const codes = new Set<string>();
+  // A subject is short: a cue anywhere in it names its number.
+  const subjectCued = hasCodeCue(email.subject);
+  for (const [text, cued] of [
+    [email.subject, subjectCued],
+    [email.text, false],
+  ] as const) {
+    for (const match of text.matchAll(CODE_PATTERN)) {
+      const written = match[0];
+      const code = normalizeOneTimeCode(written.replace(/[ -]/g, ""));
+      if (!code || YEAR.test(code) || !oneTimeCodeWritings(code).includes(written)) continue;
+      if (cued || cuedCode(text, match.index, match.index + written.length, subjectCued)) {
+        codes.add(code);
+      }
+    }
+  }
+  const [code] = codes;
+  return codes.size === 1 && code && oneTimeCodeStandsAlone(code) ? code : undefined;
+}
+
 export const LOGIN_FIELD_LIMIT = 8;
 export const LoginFieldLabel = z.string().trim().min(1).max(64);
 /** What a login asks for when no field labels are given, and what a saved username/password pair reads as. */

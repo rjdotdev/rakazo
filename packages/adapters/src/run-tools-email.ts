@@ -1,8 +1,13 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import { BOT_EMAIL_NAME_TAKEN, BotEmailNameSchema } from "@rakazo/contracts";
+import {
+  BOT_EMAIL_NAME_TAKEN,
+  BotEmailNameSchema,
+  hideOneTimeCodeInEmail,
+} from "@rakazo/contracts";
 import { attachmentComputerPath, matchesSearchQuery, redactSecrets } from "@rakazo/core";
 import { claimBotEmailName, contentEncryptionOf, reserveBotEmailSend } from "@rakazo/db";
 import { z } from "zod";
+import { loadRunEmailedCodes } from "./bot-secrets.js";
 import { redactConnectorPayload } from "./connector-safety.js";
 import type { RunContext } from "./run-context.js";
 import { isRunTainted, refuseOwnerSettingsChange } from "./run-context.js";
@@ -19,6 +24,8 @@ const POLL_MS = 3_000;
 const DELETE_EMAIL_MAX_IDS = 50;
 /** Emails a search fetches to check once decrypted, as blind-index matches can be false. */
 const SEARCH_CANDIDATES = 100;
+/** Emails a search in a run that hides values reads, at most, to check them itself. */
+const SEARCH_HIDDEN_EMAILS = 1_000;
 const SEARCHED_FIELDS = ["fromAddress", "fromName", "subject", "text"] as const;
 
 const ReadEmailSchema = z
@@ -76,6 +83,13 @@ async function readEmail(ctx: RunContext, call: ToolCall) {
   const { deps, bot, run } = ctx;
   // The inbox is the owner's mail: only their own runs of their own bot read it.
   if (run.userId !== bot.userId) return call.finish({ error: "Only the bot's owner can do that." });
+  // A code the run took from its inbox is hidden in every email also with any separators between
+  // its characters (hideOneTimeCodeInEmail); only a run that hides anything can hold one.
+  const emailedCodes = ctx.secrets.length
+    ? await loadRunEmailedCodes(deps.prisma, deps.secretStore, run, ctx.runId)
+    : [];
+  const hide = (value: string) =>
+    emailedCodes.reduce(hideOneTimeCodeInEmail, redactSecrets(value, ctx.secrets));
 
   if (input.id) {
     const email = await deps.prisma.botEmailMessage.findFirst({
@@ -84,7 +98,7 @@ async function readEmail(ctx: RunContext, call: ToolCall) {
     if (!email) return call.finish({ error: "No email with that id in your inbox." });
     const offset = input.textOffset ?? 0;
     // Masked whole before paging, so a secret split across two pages is still caught.
-    const body = redactSecrets(email.text, ctx.secrets);
+    const body = hide(email.text);
     const text = body.slice(offset, offset + TEXT_PAGE_CHARS);
     const files = email.attachments as SavedFile[];
     const kept = files.flatMap((file) =>
@@ -106,11 +120,11 @@ async function readEmail(ctx: RunContext, call: ToolCall) {
     const shown = redactConnectorPayload(
       {
         id: email.id,
-        from: sender(email),
+        from: hide(sender(email)),
         ...(email.sent ? { sent: true } : { verified: email.verified }),
         to: email.to,
         ...(email.cc.length ? { cc: email.cc } : {}),
-        subject: email.subject,
+        subject: hide(email.subject),
         receivedAt: email.receivedAt.toISOString(),
         text,
         ...(offset + TEXT_PAGE_CHARS < body.length
@@ -121,10 +135,10 @@ async function readEmail(ctx: RunContext, call: ToolCall) {
               files: files.map((file) =>
                 file.artifactId && file.mimeType
                   ? {
-                      name: file.name,
+                      name: hide(file.name),
                       path: attachmentComputerPath(file.artifactId, file.mimeType),
                     }
-                  : { name: file.name, unavailable: true },
+                  : { name: hide(file.name), unavailable: true },
               ),
             }
           : {}),
@@ -152,29 +166,64 @@ async function readEmail(ctx: RunContext, call: ToolCall) {
   // After since: the newest email already looked at, so candidates a search checked and dropped
   // are not checked again by this wait or by a caller following nextSince.
   let checkedTo: Date | undefined;
+  const select = {
+    id: true,
+    fromAddress: true,
+    fromName: true,
+    verified: true,
+    sent: true,
+    subject: true,
+    receivedAt: true,
+    text: true,
+    attachments: true,
+  } as const;
+  // After since, oldest first, so following nextSince reads every new email in order.
+  const orderBy = { receivedAt: input.since ? ("asc" as const) : ("desc" as const) };
+  const fetchEmails = (args: { where: object; skip?: number; take: number }) =>
+    deps.prisma.botEmailMessage.findMany({ ...args, orderBy, select });
+  const inWindow = () => ({
+    ...where,
+    ...(checkedTo ? { receivedAt: { ...where.receivedAt, gt: checkedTo } } : {}),
+  });
+  /**
+   * The database matches stored text, hidden values and all, so a search there would tell a run
+   * that hides any value, such as a code from an email or a password a page echoed, which email
+   * holds one. That run reads its mail itself, newest first (oldest first after since), and
+   * matches only what it may read, so what it returns and how far it read never depend on a
+   * hidden value.
+   */
+  const searchHidden = async (query: string) => {
+    const window = inWindow();
+    const matches: Awaited<ReturnType<typeof fetchEmails>> = [];
+    const seen = new Set<string>();
+    let readTo: Date | undefined;
+    for (
+      let skip = 0;
+      skip < SEARCH_HIDDEN_EMAILS && matches.length < limit;
+      skip += SEARCH_CANDIDATES
+    ) {
+      const page = await fetchEmails({ where: window, skip, take: SEARCH_CANDIDATES });
+      for (const email of page) {
+        if (matches.length >= limit) break;
+        readTo = email.receivedAt;
+        // Mail arriving between pages shifts them, so one may come twice.
+        if (seen.has(email.id)) continue;
+        seen.add(email.id);
+        if (matchesSearchQuery(query, ...SEARCHED_FIELDS.map((field) => hide(email[field]))))
+          matches.push(email);
+      }
+      if (page.length < SEARCH_CANDIDATES) break;
+    }
+    if (input.since) checkedTo = readTo ?? checkedTo;
+    return matches;
+  };
   // Asked again on every look: a Space's first key can appear while the bot waits.
   const list = async () => {
+    if (input.query && ctx.secrets.length) return searchHidden(input.query);
     const search = input.query ? await emailQuery(ctx, input.query) : undefined;
-    const found = await deps.prisma.botEmailMessage.findMany({
-      where: {
-        ...where,
-        ...(checkedTo ? { receivedAt: { ...where.receivedAt, gt: checkedTo } } : {}),
-        ...search?.where,
-      },
-      // After since, oldest first, so following nextSince reads every new email in order.
-      orderBy: { receivedAt: input.since ? ("asc" as const) : ("desc" as const) },
+    const found = await fetchEmails({
+      where: { ...inWindow(), ...search?.where },
       take: search?.check ? SEARCH_CANDIDATES : limit,
-      select: {
-        id: true,
-        fromAddress: true,
-        fromName: true,
-        verified: true,
-        sent: true,
-        subject: true,
-        receivedAt: true,
-        text: true,
-        attachments: true,
-      },
     });
     if (!search?.check) return found;
     const matches = found.filter((email) =>
@@ -202,14 +251,11 @@ async function readEmail(ctx: RunContext, call: ToolCall) {
   const nextSince = (checkedTo ?? newest?.receivedAt)?.toISOString() ?? input.since;
   const listed = emails.map((email) => ({
     id: email.id,
-    from: sender(email),
+    from: hide(sender(email)),
     ...(email.sent ? { sent: true } : { verified: email.verified }),
-    subject: email.subject,
+    subject: hide(email.subject),
     receivedAt: email.receivedAt.toISOString(),
-    preview: redactSecrets(email.text, ctx.secrets)
-      .slice(0, PREVIEW_CHARS)
-      .replace(/\s+/g, " ")
-      .trim(),
+    preview: hide(email.text).slice(0, PREVIEW_CHARS).replace(/\s+/g, " ").trim(),
     ...((email.attachments as SavedFile[]).length
       ? { files: (email.attachments as SavedFile[]).length }
       : {}),

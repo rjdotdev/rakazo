@@ -91,15 +91,19 @@ function fakeRun(
               }),
             }
           : {}),
+        // No code taken from the inbox.
+        secret: { findMany: async () => [] },
         botEmailMessage: {
           findFirst: async ({ where }: { where: { id: string; botId: string } }) =>
             inbox.find((email) => email.id === where.id && email.botId === where.botId) ?? null,
           findMany: async ({
             where,
+            skip = 0,
             take,
             orderBy,
           }: {
             where: Record<string, unknown>;
+            skip?: number;
             take?: number;
             orderBy: { receivedAt: "asc" | "desc" };
           }) => {
@@ -113,7 +117,7 @@ function fakeRun(
                   (orderBy.receivedAt === "asc" ? 1 : -1) *
                   (a.receivedAt.getTime() - b.receivedAt.getTime()),
               )
-              .slice(0, take);
+              .slice(skip, take === undefined ? undefined : skip + take);
           },
           deleteMany: async ({
             where,
@@ -219,6 +223,26 @@ describe("read_email", () => {
 
     expect(first.emails).toEqual([]);
     expect(first.nextSince).toBe(checked.toISOString());
+  });
+
+  it("searches past the newest hundred emails in a run that hides values, on hidden text", async () => {
+    const day = (n: number) => new Date(Date.UTC(2026, 9, 1) + n * 3_600_000);
+    const rows = [
+      row({ id: "old-hit", text: "Pelican sighting", receivedAt: day(0) }),
+      row({ id: "old-hidden", text: "hunter22 pelican", receivedAt: day(1) }),
+      ...Array.from({ length: 250 }, (_, n) =>
+        row({ id: `filler-${n}`, text: "Nothing here", receivedAt: day(n + 2) }),
+      ),
+    ];
+    const { call } = fakeRun(rows, { secrets: ["hunter22 pelican"] });
+
+    const found = (await call({ query: "pelican" })).emails as Array<{ id: string }>;
+    const hidden = await call({ query: "hunter22", since: day(-1).toISOString() });
+    const nothing = await call({ query: "zzzzqq", since: day(-1).toISOString() });
+
+    expect(found.map((email) => email.id)).toEqual(["old-hit"]);
+    expect(JSON.stringify(hidden)).toBe(JSON.stringify(nothing));
+    expect(nothing.nextSince).toBe(day(251).toISOString());
   });
 
   it("starts the next look after the newest email it returned, or where it was asked to", async () => {

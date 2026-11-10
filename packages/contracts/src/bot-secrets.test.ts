@@ -8,11 +8,14 @@ import {
   commandVariableProblem,
   decodeLoginSecret,
   encodeLoginSecret,
+  extractOneTimeCode,
+  hideOneTimeCodeInEmail,
   LOGIN_FIELD_LIMIT,
   LoginFieldLabels,
   loginCardFields,
   normalizeOneTimeCode,
   OneTimeCodeTarget,
+  oneTimeCodeWritings,
   SecretHttpRequest,
 } from "./bot-secrets.js";
 import { AGENT_SECRET_NAME_PATTERN } from "./domain.js";
@@ -591,6 +594,162 @@ describe("one-time code contracts", () => {
     "١٢٣٤٥٦",
   ])("takes %j as no code", (typed) => {
     expect(normalizeOneTimeCode(typed)).toBeUndefined();
+  });
+
+  describe("reading a code out of an email", () => {
+    const read = (text: string, subject = "Sign in") => extractOneTimeCode({ subject, text });
+
+    it.each([
+      ["six digits", "Your verification code is 482913.", "482913"],
+      ["eight digits", "Code: 48291375", "48291375"],
+      ["a code split by a space", "Your code: 482 913", "482913"],
+      ["a code split by a dash", "Your code: 482-913", "482913"],
+      ["eight digits in two groups", "Passcode 4829 1375", "48291375"],
+      ["letters and digits", "Use code K7Q2M9 to sign in.", "K7Q2M9"],
+      ["a code after its cue", "482913 is your one-time password", "482913"],
+      ["a code on a line of its own under its cue", "Your code:\n\n  482913\n\nThanks", "482913"],
+      [
+        "a code on a line of its own over its cue",
+        "Hi,\n482913\nEnter this code to sign in.",
+        "482913",
+      ],
+    ])("finds %s", (_name, text, code) => {
+      expect(read(text)).toBe(code);
+    });
+
+    it("takes a number on a line of its own only with a cue in the subject or the next line", () => {
+      expect(read("Order number\n48213377\n")).toBeUndefined();
+      expect(read("Hi,\n\n  482913\n\nThanks")).toBeUndefined();
+      expect(read("Hi,\n\n  482913\n\nThanks", "Your sign-in code")).toBe("482913");
+      // Only the nearest line with text on it, not a cue further away.
+      expect(read("Your code is below.\nOrder number\n48213377\n")).toBeUndefined();
+    });
+
+    it.each([
+      ["four digits", "Your code: 4829"],
+      ["five digits", "Code 48291, valid for 10 minutes."],
+    ])("takes no code of %s, which could not be hidden on its own", (_name, text) => {
+      expect(read(text)).toBeUndefined();
+      expect(read("Welcome back.", text)).toBeUndefined();
+      // Still a second code, so the email is not read as holding one.
+      expect(read(`${text}\nYour code is 731905.`)).toBeUndefined();
+    });
+
+    it.each([
+      ["en", "Your verification code is 482913."],
+      ["de", "Ihr Bestätigungscode lautet 482913."],
+      ["es", "Tu código de verificación es 482913."],
+      ["fr", "Mot de passe à usage unique : 482913"],
+      ["he", "קוד האימות שלך הוא 482913"],
+      ["hi", "आपका सत्यापन कोड 482913 है।"],
+      ["ja", "認証コードは482913です。"],
+      ["ko", "인증번호는 482913입니다."],
+      ["nl", "Je verificatiecode is 482913."],
+      ["pl", "Twój kod weryfikacyjny to 482913."],
+      ["pt-BR", "Seu código de verificação é 482913."],
+      ["ru", "Ваш код подтверждения: 482913"],
+      ["tr", "Doğrulama kodunuz: 482913"],
+      ["zh-CN", "您的验证码是482913，5分钟内有效。"],
+      ["zh-TW", "您的驗證碼為482913。"],
+    ])("finds a code by its cue in %s", (_language, text) => {
+      expect(read(text)).toBe("482913");
+    });
+
+    it.each([
+      ["an order number", "Your order 12345 has shipped."],
+      ["a postal code", "Mountain View, CA 94043"],
+      ["a postal code named as one", "ZIP code: 94043"],
+      ["a promo code", "Use promo code SAVE2026 at checkout."],
+      ["a number with no cue", "Enter 4829 to continue."],
+    ])("does not take %s with no code cue next to it", (_name, text) => {
+      expect(read(text)).toBeUndefined();
+      expect(read(`${text}\nYour code is 731905.`)).toBe("731905");
+    });
+
+    it("takes a number in the subject only when the subject names a code", () => {
+      expect(read("Welcome back.", "Order 482913 confirmed")).toBeUndefined();
+      expect(read("Welcome back.", "482913 is your sign-in code")).toBe("482913");
+    });
+
+    it("finds the code in the subject, also when the text repeats it", () => {
+      expect(read("Welcome back.", "482913 is your sign-in code")).toBe("482913");
+      expect(read("Your code is 482 913.", "482913 is your sign-in code")).toBe("482913");
+    });
+
+    it.each([
+      ["six digits", "Your code: 482913", "482913"],
+      ["eight digits", "Your code: 48291375", "48291375"],
+      ["six digits spaced", "Your code: 482 913", "482 913"],
+      ["six digits dashed", "Your code: 482-913", "482-913"],
+      ["eight digits spaced", "Your code: 4829 1375", "4829 1375"],
+      ["eight digits dashed", "Your code: 4829-1375", "4829-1375"],
+      ["letters and digits", "Your code: K7Q2M9", "K7Q2M9"],
+    ])("names %s as written among the code's writings", (_name, text, written) => {
+      for (const email of [
+        { subject: "Sign in", text },
+        { subject: text, text: "Welcome back." },
+      ]) {
+        const code = extractOneTimeCode(email);
+        expect(code).toBe(written.replace(/[ -]/g, ""));
+        expect(oneTimeCodeWritings(code!)).toContain(written);
+      }
+    });
+
+    it.each([
+      ["a year", "© 2026 Example Inc. All rights reserved."],
+      ["a date", "Sent on 2026-11-10 at 10:30."],
+      ["a phone number", "Not you? Call +1 (555) 123-4567 or 555 123 4567."],
+      ["an international phone number", "Call us on +44 7700 900123."],
+      ["an order number", "Order #48213977 has shipped."],
+      ["an amount", "You paid $1234.56, or 1,234.56 EUR."],
+      ["a number in a link", "Verify at https://example.test/verify?token=482913&id=5512"],
+      ["three digits", "Room 123."],
+      ["nine digits", "Account 482913755."],
+      ["lowercase letters and digits", "Plays mp4 and h264 files, like abc123."],
+    ])("does not take %s for a code", (_name, text) => {
+      expect(read(`${text}\nYour code is 731905.`)).toBe("731905");
+      expect(read(text)).toBeUndefined();
+      // Not even with a cue next to it.
+      expect(read(`Your code: ${text}`)).toBeUndefined();
+    });
+
+    it("finds nothing in an email without a code", () => {
+      expect(
+        read("Thanks for signing up. Click the link to confirm your address."),
+      ).toBeUndefined();
+    });
+
+    it("finds nothing when the email holds two different codes", () => {
+      expect(read("Your code is 482913. Your previous code 731905 has expired.")).toBeUndefined();
+      expect(read("Order 48213977 is ready. Your code is 731905.")).toBeUndefined();
+      expect(read("Your code is 731905.", "Your code is 482913")).toBeUndefined();
+    });
+  });
+
+  describe("hiding a taken code in email text", () => {
+    it.each([
+      ["as is", "482913"],
+      ["with a no-break space", "482\u00a0913"],
+      ["with a narrow no-break space", "482\u202f913"],
+      ["with dots", "4.8.2.9.1.3"],
+      ["with a double space", "482  913"],
+      ["on separate lines", "4\n8\n2\n9\n1\n3"],
+      ["with a middle dot and an en dash", "48·29–13"],
+    ])("hides it written %s", (_name, written) => {
+      expect(hideOneTimeCodeInEmail(`Code: ${written}!`, "482913")).toBe("Code: [redacted]!");
+    });
+
+    it("hides letters in either case, and nothing but the code's characters in order", () => {
+      expect(hideOneTimeCodeInEmail("k7 q2 M9", "K7Q2M9")).toBe("[redacted]");
+      expect(hideOneTimeCodeInEmail("4829, 13 and 482_913", "482913")).toBe("4829, 13 and 482_913");
+    });
+
+    it("stays linear on a long run of separators", () => {
+      const text = `${"4".repeat(5)}${" ".repeat(200_000)}x`;
+      const started = performance.now();
+      expect(hideOneTimeCodeInEmail(text, "444444")).toBe(text);
+      expect(performance.now() - started).toBeLessThan(1_000);
+    });
   });
 
   it("is for an HTTPS origin only, never a path, credentials or plain HTTP", () => {
