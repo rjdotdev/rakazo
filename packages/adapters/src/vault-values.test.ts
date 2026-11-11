@@ -27,7 +27,12 @@ import { computerTools } from "./run-tools-computer.js";
 import { ComposedSecretStore } from "./secret-store-factory.js";
 import { infisicalFake } from "./secret-store-fake.js";
 import { EncryptedSecretStore } from "./secrets.js";
-import { migrateVaultValues, openVaultValue, rotateVaultKeys } from "./vault-values.js";
+import {
+  migrateVaultValues,
+  openVaultValue,
+  rotateVaultKeys,
+  vaultItemsUnderOlderKeys,
+} from "./vault-values.js";
 
 const scope = { userId: "user-1", spaceId: "space-1" };
 // The same store the previous release reads vault values with.
@@ -87,6 +92,10 @@ function encryptedDatabase(encryptWrites = true) {
           .sort()
           .slice(0, take)
           .map((spaceId) => ({ spaceId })),
+      findMany: async () =>
+        [...keys]
+          .sort((a, b) => a.version - b.version)
+          .map(({ id, spaceId, version }) => ({ id, spaceId, version })),
     },
   });
   const reports: string[] = [];
@@ -901,6 +910,34 @@ describe("moving vault values to the envelope keys", () => {
     await expect(openVaultValue(other.prisma, secretStore, row(db, "site"))).rejects.toThrow(
       "key manager unavailable",
     );
+  });
+
+  it("counts items a process saved under its cached key version after a rotation, until reencrypt moves them", async () => {
+    const { db, other, versionOf } = await cachedElsewhere();
+    // Neither the previous format nor Infisical has a key version to count.
+    const { ciphertext } = await secretStore.put(loginValue(), context, { recordId: "old" });
+    db.rows().push({ ...row(db, "site"), id: "old", name: "old", ciphertext });
+    db.rows().push({
+      ...row(db, "site"),
+      id: "remote",
+      name: "remote",
+      ciphertext: "infisical:v1:ref",
+    });
+    await save(db, card, JSON.stringify(fakeCard)); // warms this process's cache too
+    expect(await vaultItemsUnderOlderKeys(db.prisma)).toBe(0);
+
+    await rotateVaultKeys(db.prisma);
+    expect(await vaultItemsUnderOlderKeys(db.prisma)).toBe(2);
+    await db.migrate("reencrypt");
+    expect(await vaultItemsUnderOlderKeys(db.prisma)).toBe(0);
+    // Within its cache window the other process still seals a save with version 1.
+    const later = { ...login, name: "later" } as BotSecretDestination;
+    await save({ ...db, prisma: other.prisma }, later, loginValue("fake-later"));
+    expect(versionOf("later")).toBe(1);
+    expect(await vaultItemsUnderOlderKeys(db.prisma)).toBe(1);
+    expect(await db.migrate("reencrypt")).toMatchObject({ migrated: 1 });
+    expect(versionOf("later")).toBe(2);
+    expect(await vaultItemsUnderOlderKeys(db.prisma)).toBe(0);
   });
 
   it("does what each command must to each kind of item", async () => {

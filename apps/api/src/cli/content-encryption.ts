@@ -10,6 +10,7 @@ import {
   rotateVaultKeys,
   unwrapEnvFromKeyManager,
   upgradeLegacySecrets,
+  vaultItemsUnderOlderKeys,
   withSecretPersistence,
 } from "@rakazo/adapters";
 import { resolveContentEncryption, resolveEncryptionKey } from "@rakazo/core";
@@ -31,7 +32,8 @@ loadRootEnv();
 await unwrapEnvFromKeyManager();
 
 const USAGE = `Usage: content-encryption <command> [--dry-run]
-  status               Rows and artifacts still in plaintext, keys per master key
+  status               Rows and artifacts still in plaintext, vault items under an older
+                       key version, keys per master key
   migrate              Encrypt existing content, upgrade legacy credentials, move
                        vault values to the content keys and MCP server arguments
                        into their encrypted credentials
@@ -228,6 +230,9 @@ try {
         write(
           `${table.table}: ${table.plaintext} of ${table.rows} ${table.table === "vault_credentials" ? "not yet under the content keys" : "in plaintext"}`,
         );
+      write(
+        `vault items under an older vault key version: ${await vaultItemsUnderOlderKeys(prisma)} (reencrypt moves them)`,
+      );
       for (const [masterKeyId, count] of Object.entries(status.masterKeys))
         write(`space keys under master key ${masterKeyId}: ${count}`);
       write(`active master key: ${contentKeys.provider.activeKeyId()}`);

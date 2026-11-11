@@ -1,6 +1,7 @@
 import type { AdapterContext, SecretStore } from "@rakazo/adapter-kit";
 import type { ContentLocation, DataKey, PrismaClient } from "@rakazo/db";
 import {
+  CIPHERTEXT_PREFIX,
   ContentDecryptionError,
   ciphertextKeyId,
   contentEncryptionOf,
@@ -229,6 +230,36 @@ export async function migrateVaultValues(
     if (batch.length < 200) break;
   }
   return counts;
+}
+
+/**
+ * Vault items under a version of their vault's key other than the newest stored one, such as
+ * saves a process sealed with the version it had cached when another process rotated the key.
+ * `reencrypt` moves them. Read-only: it compares the key id each value names, opens nothing and
+ * unwraps no key.
+ */
+export async function vaultItemsUnderOlderKeys(prisma: PrismaClient): Promise<number> {
+  const newest = new Map<string, string>();
+  for (const key of await prisma.spaceKey.findMany({
+    where: { OR: [{ spaceId: { startsWith: "user:" } }, { spaceId: { startsWith: "vault:" } }] },
+    orderBy: { version: "asc" },
+    select: { id: true, spaceId: true, version: true },
+  }))
+    newest.set(key.spaceId, key.id);
+  let count = 0;
+  let cursor = "";
+  while (true) {
+    const batch = await prisma.vaultCredential.findMany({
+      where: { id: { gt: cursor }, ciphertext: { startsWith: CIPHERTEXT_PREFIX } },
+      orderBy: { id: "asc" },
+      take: 1000,
+      select: { id: true, userId: true, spaceId: true, ciphertext: true },
+    });
+    for (const row of batch)
+      if (ciphertextKeyId(row.ciphertext) !== newest.get(keyScope(row))) count++;
+    if (batch.length < 1000) return count;
+    cursor = batch.at(-1)!.id;
+  }
 }
 
 /**

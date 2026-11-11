@@ -229,12 +229,22 @@ the other keys still rotate, items still move, and the command exits with an
 error at the end. Older versions keep decrypting until nothing uses them.
 `migrate` and `reencrypt` read each vault's newest key version from the
 database, not from memory, so they move items to a version that another
-process has just added. One delay remains by design. A running process keeps
-the key versions it has read in memory for up to ten minutes, so for that long
-after a rotation it may still seal new saves with the previous version. Those
-saves still open. An interrupted run also leaves some items under the old
-version, so run `content-encryption reencrypt` again after that; it rotates no
-keys.
+process has just added.
+
+Rotation is not finished when `rotate --reencrypt` exits. Each API and worker
+process keeps the key versions it has read in memory for up to ten minutes
+(the default `ttlMs` of `ContentKeyRing` in `packages/db/src/content-keys.ts`).
+For that long after a rotation, it may still seal new content and new vault
+saves with the previous version. Those stay under that version until the next
+`reencrypt`. An interrupted run also leaves items under the previous version.
+After a suspected key exposure:
+
+1. Run `content-encryption rotate --reencrypt`.
+2. Wait ten minutes, or restart every API and worker process.
+3. Run `content-encryption reencrypt`. It rotates no keys.
+4. Run `content-encryption status`. Its `vault items under an older vault key
+   version` line should read 0; if it does not, repeat steps 2 and 3. It counts
+   vault items only, not Space content.
 
 ## External key management
 

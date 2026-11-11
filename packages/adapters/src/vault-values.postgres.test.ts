@@ -16,7 +16,7 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { resolveLoginFill, revealBotSecret, storeBotSecret } from "./bot-secrets.js";
 import { EncryptedSecretStore } from "./secrets.js";
-import { migrateVaultValues, rotateVaultKeys } from "./vault-values.js";
+import { migrateVaultValues, rotateVaultKeys, vaultItemsUnderOlderKeys } from "./vault-values.js";
 
 const url = process.env.DATABASE_URL;
 const describePostgres = process.env.VERIFY_DATABASE === "1" && url ? describe : describe.skip;
@@ -407,6 +407,65 @@ describePostgres("vault values under the content keys (PostgreSQL)", () => {
       await other.prisma.$disconnect();
       await other.pool.end();
       await system.messagingIdentity.deleteMany({ where: { address: raceAddress } });
+      await system.organization.deleteMany({ where: { id: member.spaceId } });
+      await system.user.deleteMany({ where: { id: member.userId } });
+    }
+  });
+
+  it("counts items a process saved under its cached key version after a rotation, until reencrypt moves them", async () => {
+    const windowAddress = `vault-window-${randomUUID()}@rakazo.test`;
+    const member = await runAsSystem("vault key window fixture", () =>
+      provisionMessagingIdentity(
+        sealing.prisma,
+        { provider: "email", address: windowAddress },
+        { signupsEnabled: undefined, signupAllowlist: undefined },
+      ),
+    );
+    // A second process, with its own key cache.
+    const other = createDb(url!, { keyProvider, encryptContent: true });
+    try {
+      const saveWith = (prisma: typeof sealing.prisma, name: string) =>
+        runAsTenant(member, () =>
+          storeBotSecret({
+            prisma,
+            secretStore,
+            scope: member,
+            destination: { ...login, name } as BotSecretDestination,
+            plaintext: value(`fake-${name}-password`),
+          }),
+        );
+      const reencrypt = () =>
+        runAsSystem("vault values migration", () =>
+          migrateVaultValues(sealing.prisma, secretStore, context, { mode: "reencrypt" }),
+        );
+      const olderKeys = () =>
+        runAsSystem("vault status", () => vaultItemsUnderOlderKeys(sealing.prisma));
+      await saveWith(sealing.prisma, "site");
+      await runAsSystem("vault values migration", () =>
+        migrateVaultValues(sealing.prisma, secretStore, context, { mode: "encrypt" }),
+      );
+      await saveWith(other.prisma, "warm"); // the other process caches version 1
+      await runAsSystem("vault key rotation", () => rotateVaultKeys(sealing.prisma));
+      await reencrypt();
+      // Other tests' damaged items may stay behind; this vault's are counted on top of them.
+      const settled = await olderKeys();
+
+      await saveWith(other.prisma, "later");
+      const later = await system.vaultCredential.findFirstOrThrow({
+        where: { userId: member.userId, name: "later" },
+      });
+      const [first] = await system.spaceKey.findMany({
+        where: { spaceId: `user:${member.userId}` },
+        orderBy: { version: "asc" },
+      });
+      expect(ciphertextKeyId(later.ciphertext)).toBe(first!.id);
+      expect(await olderKeys()).toBe(settled + 1);
+      await reencrypt();
+      expect(await olderKeys()).toBe(settled);
+    } finally {
+      await other.prisma.$disconnect();
+      await other.pool.end();
+      await system.messagingIdentity.deleteMany({ where: { address: windowAddress } });
       await system.organization.deleteMany({ where: { id: member.spaceId } });
       await system.user.deleteMany({ where: { id: member.userId } });
     }
