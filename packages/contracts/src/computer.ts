@@ -4,6 +4,11 @@ import { Id, SandboxKind } from "./ids.js";
 export const ComputerModeSchema = z.enum(["team", "dedicated"]);
 export type ComputerMode = z.infer<typeof ComputerModeSchema>;
 
+/** Largest text file the chat Files view reads or saves in one request. */
+export const CHAT_FILE_TEXT_BYTES = 2 * 1024 * 1024;
+/** Line window the Files view can ask for. A file that fits is read whole, then paged. */
+export const CHAT_FILE_READ_MAX_LINES = 50_000;
+
 /** How big a machine a cloud computer runs on. Providers without sizes ignore it. */
 export const ComputerSizeSchema = z.enum(["standard", "large", "xlarge"]);
 export type ComputerSize = z.infer<typeof ComputerSizeSchema>;

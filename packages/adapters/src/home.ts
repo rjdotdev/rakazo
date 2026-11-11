@@ -199,6 +199,42 @@ export class LocalAgentHomeStore implements AgentHomeStore {
     }
   }
 
+  /**
+   * A byte window of one file. `size` is the whole file, so a caller can page without reading it.
+   * Symlinks are resolved and refused when they leave the home, same as `readFile`.
+   */
+  async readBytes(
+    botId: string,
+    filePath: string,
+    _context: AdapterContext,
+    options?: { maxBytes?: number; offset?: number },
+  ): Promise<{ bytes: Uint8Array; size: number }> {
+    await this.waitForBotWrite(botId);
+    await this.recoverInterruptedCommit(botId);
+    const { root, full } = await containedExistingPath(this.botDir(botId), filePath);
+    const handle = await open(full, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      assertContained(root, await fileHandlePath(handle.fd));
+      const info = await handle.stat();
+      if (!info.isFile()) throw new Error("agent home entry is not a file");
+      const size = info.size;
+      const offset = Math.max(0, options?.offset ?? 0);
+      if (offset >= size) return { bytes: new Uint8Array(), size };
+      const length = Math.min(options?.maxBytes ?? size - offset, size - offset);
+      if (length <= 0) return { bytes: new Uint8Array(), size };
+      const bytes = Buffer.alloc(length);
+      let written = 0;
+      while (written < length) {
+        const read = await handle.read(bytes, written, length - written, offset + written);
+        if (read.bytesRead === 0) break;
+        written += read.bytesRead;
+      }
+      return { bytes: new Uint8Array(bytes.subarray(0, written)), size };
+    } finally {
+      await handle.close();
+    }
+  }
+
   async writeFile(
     botId: string,
     filePath: string,

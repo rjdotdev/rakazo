@@ -58,6 +58,8 @@ import {
   CreateBotFromTemplateOutput,
 } from "./bot-template.js";
 import {
+  CHAT_FILE_READ_MAX_LINES,
+  CHAT_FILE_TEXT_BYTES,
   ComputerModeSchema,
   ComputerProviderSettingsSchema,
   ComputerProviderUpdateSchema,
@@ -113,6 +115,7 @@ import {
   MessagingInstallationsStatusSchema,
   MessagingLinkedIdentitySchema,
   MessagingStatusSchema,
+  PlanLimitsSchema,
   PluginMarketplaceCatalogSchema,
   PluginPartSchema,
   PluginPreviewSchema,
@@ -844,8 +847,53 @@ export const appContract = {
         z.array(z.object({ path: z.string(), kind: z.enum(["file", "dir"]), size: z.number() })),
       ),
     readFile: oc
-      .input(z.object({ botId: Id, path: z.string() }))
-      .output(z.object({ path: z.string(), content: z.string() })),
+      .input(
+        z.object({
+          botId: Id,
+          path: z.string(),
+          /** 1-based line to start at. Omit for the start of the file. */
+          offset: z.number().int().min(1).max(1_000_000).optional(),
+          /** Lines to return. Omit for the whole file, up to the line cap. */
+          limit: z.number().int().min(1).max(CHAT_FILE_READ_MAX_LINES).optional(),
+        }),
+      )
+      .output(
+        z.object({
+          path: z.string(),
+          content: z.string(),
+          startLine: z.number().int(),
+          endLine: z.number().int(),
+          /** Null when the file is larger than the read cap, so the line count is incomplete. */
+          totalLines: z.number().int().nullable(),
+          partial: z.boolean(),
+          /** Set when this response is the whole file, so a save can tell if it changed. */
+          contentHash: z.string().nullable(),
+        }),
+      ),
+    /** Text save that does not require computer control. Confined to this bot and shared/. */
+    saveFile: oc
+      .input(
+        z.object({
+          botId: Id,
+          path: z.string().min(1),
+          content: z.string().max(CHAT_FILE_TEXT_BYTES),
+          /** Hash from a full read. A different file now is refused. */
+          expectedContentHash: z
+            .string()
+            .regex(/^[a-f0-9]{64}$/)
+            .optional(),
+        }),
+      )
+      .output(
+        z.object({
+          ok: z.literal(true),
+          path: z.string(),
+          /** False when the file was saved but this chat's changed list did not record it. */
+          tracked: z.boolean(),
+        }),
+      ),
+    /** Files this bot wrote in its own chat, newest first. */
+    changedFiles: oc.input(botId).output(z.array(z.object({ path: z.string(), at: z.string() }))),
     downloadFile: oc
       .input(z.object({ botId: Id, path: z.string().min(1) }))
       .output(z.object({ path: z.string(), contentBase64: z.string() })),
@@ -1438,6 +1486,8 @@ export const appContract = {
   usage: {
     list: oc.output(z.array(UsageRecordSchema)),
     summary: oc.output(UsageSummarySchema),
+    /** Subscription sign-ins whose allowance could be read; others are left out. */
+    limits: oc.output(z.array(PlanLimitsSchema)),
   },
   export: {
     bot: oc.input(botId).output(ExportManifestSchema),

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { ORPCError } from "@orpc/server";
-import type { SandboxProvider } from "@rakazo/adapter-kit";
+import type { AdapterContext, AgentHomeStore, SandboxProvider } from "@rakazo/adapter-kit";
 import { computerControlExpireJobKey } from "@rakazo/adapter-kit";
 import type { ComputerExecutionLease } from "@rakazo/adapters";
 import {
@@ -18,13 +18,13 @@ import {
   hasActiveComputerControl,
   isComputerScreenUnavailable,
   isSandboxGoneError,
+  LocalAgentHomeStore,
   provisionComputer,
   queueComputerUpdate,
   rateLimitEnds,
   releaseComputerExecutionLease,
   resolveBotUploadPath,
   resolveBotWorkspaceCwd,
-  resolveBotWorkspacePath,
   scheduleComputerControlExpiry,
   scheduleComputerSleep,
   screenLeaseIdForRun,
@@ -33,9 +33,12 @@ import {
   toComputerRef,
   touchRunningComputer,
 } from "@rakazo/adapters";
+import type { ComputerMode } from "@rakazo/contracts";
 import {
   attachmentMaxBytes,
   attachmentSizeLabel,
+  CHAT_FILE_READ_MAX_LINES,
+  CHAT_FILE_TEXT_BYTES,
   ComputerCommandSchema,
   foldComputerCommands,
 } from "@rakazo/contracts";
@@ -50,6 +53,19 @@ import {
   recordComputerRunEnd,
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
+import {
+  assertLivePathContained,
+  ChatFileError,
+  chatTextContentHash,
+  isOversizedFileError,
+  isStoredWorkspaceDirectory,
+  liveContainmentPrefixes,
+  readChatTextPage,
+  readSandboxByteRange,
+  textContentHash,
+  userWorkspacePath,
+  writeContainedSandboxFile,
+} from "../chat-files.js";
 import {
   acquireBootLease,
   assertNotAnotherPersonsControl,
@@ -69,10 +85,126 @@ import { executionBlocksUserTakeover } from "../computer-status.js";
 import type { RouterContext } from "./context.js";
 import { computerContext } from "./shared.js";
 
-const MAX_COMPUTER_TEXT_FILE_BYTES = 2 * 1024 * 1024;
+const CHANGED_CHAT_FILES = 20;
+const CHANGED_FILE_SCAN_PAGES = 20;
+const COMPUTER_BUSY = "The computer is busy. Try again.";
+const FILE_CHANGED = "This file changed. Open it again.";
 
 /** Each command writes a running and a done event, so this keeps about 100 commands. */
 const COMPUTER_COMMAND_HISTORY_EVENTS = 200;
+
+function fileRpcError(error: unknown): never {
+  if (error instanceof ChatFileError || isOversizedFileError(error)) {
+    const notText = error instanceof ChatFileError && error.code === "not_text";
+    throw new ORPCError("BAD_REQUEST", {
+      message: notText ? "file is not a text file" : "file is too large to preview",
+    });
+  }
+  if (error instanceof Error && /escapes/i.test(error.message)) {
+    throw new ORPCError("BAD_REQUEST", { message: "Path escapes the bot workspace" });
+  }
+  if (error instanceof Error && error.message === "agent home entry is not a file") {
+    throw new ORPCError("BAD_REQUEST", { message: "file is not a text file" });
+  }
+  if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+    throw new ORPCError("NOT_FOUND", { message: "file not found" });
+  }
+  throw error;
+}
+
+/** This bot's folder, or shared/. `/` is the bot folder, never the Team Computer root. */
+function containedUserPath(scope: ComputerMode, botId: string, requested: string): string {
+  try {
+    return userWorkspacePath(scope, botId, requested);
+  } catch (error) {
+    fileRpcError(error);
+  }
+}
+
+function isWorkspaceDirectory(scope: ComputerMode, botId: string, stored: string): boolean {
+  return isStoredWorkspaceDirectory(scope, botId, stored);
+}
+
+async function guardLivePath(
+  sandbox: SandboxProvider,
+  computer: ReturnType<typeof toComputerRef>,
+  scope: ComputerMode,
+  botId: string,
+  storedPath: string,
+  ctx: AdapterContext,
+): Promise<void> {
+  try {
+    await assertLivePathContained(
+      sandbox,
+      computer,
+      storedPath,
+      liveContainmentPrefixes(scope, botId),
+      ctx,
+    );
+  } catch (error) {
+    fileRpcError(error);
+  }
+}
+
+function fileWasReplaced(error: unknown): boolean {
+  if (error instanceof ChatFileError || isOversizedFileError(error)) return true;
+  if (error instanceof Error && "code" in error && error.code === "ENOENT") return true;
+  return error instanceof Error && /not found|no such file/i.test(error.message);
+}
+
+async function assertUnchanged(
+  expected: string | undefined,
+  read: () => Promise<Uint8Array>,
+): Promise<void> {
+  if (!expected) return;
+  let bytes: Uint8Array;
+  try {
+    bytes = await read();
+  } catch (error) {
+    if (fileWasReplaced(error)) {
+      throw new ORPCError("CONFLICT", { message: FILE_CHANGED });
+    }
+    throw error;
+  }
+  let hash: string;
+  try {
+    hash = textContentHash(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch {
+    throw new ORPCError("CONFLICT", { message: FILE_CHANGED });
+  }
+  if (hash !== expected) throw new ORPCError("CONFLICT", { message: FILE_CHANGED });
+}
+
+async function readHomeBytes(
+  home: AgentHomeStore,
+  homeKey: string,
+  storedPath: string,
+  ctx: AdapterContext,
+  maxBytes: number,
+): Promise<Uint8Array> {
+  if (home instanceof LocalAgentHomeStore) {
+    const { size } = await home.readBytes(homeKey, storedPath, ctx, { maxBytes: 0 });
+    if (size > maxBytes) throw new Error(`agent home file exceeds ${maxBytes} bytes`);
+    const { bytes } = await home.readBytes(homeKey, storedPath, ctx, { maxBytes });
+    return bytes;
+  }
+  return new TextEncoder().encode(await home.readFile(homeKey, storedPath, ctx, { maxBytes }));
+}
+
+async function readHomeRange(
+  home: AgentHomeStore,
+  homeKey: string,
+  storedPath: string,
+  ctx: AdapterContext,
+  offset: number,
+  length: number,
+): Promise<Uint8Array> {
+  if (!(home instanceof LocalAgentHomeStore)) {
+    throw new Error(`agent home file exceeds ${CHAT_FILE_TEXT_BYTES} bytes`);
+  }
+  const { bytes } = await home.readBytes(homeKey, storedPath, ctx, { offset, maxBytes: length });
+  return bytes;
+}
 
 export function computerRoutes(ctx: RouterContext) {
   const { deps, repos, taughtSkills, authed } = ctx;
@@ -577,7 +709,8 @@ export function computerRoutes(ctx: RouterContext) {
         const computer = bot.computer;
         const computerMode = parseComputerMode(computer.scope);
         const ctx = computerContext(context.actor, bot.id, "files");
-        const storedPath = resolveBotWorkspacePath(computerMode, bot.id, input.path);
+        const requested = input.path === "/" || input.path === "." ? "" : input.path;
+        const storedPath = containedUserPath(computerMode, bot.id, requested);
         let entries: Awaited<ReturnType<SandboxProvider["listFiles"]>>;
         if (computer.state === "running" && computer.providerRef) {
           await deps.prisma.computer.updateMany({
@@ -587,90 +720,241 @@ export function computerRoutes(ctx: RouterContext) {
           scheduleComputerSleep(deps.jobs, computer.id);
           const ref = toComputerRef(computer);
           await ensureComputerWorkspaceLayout(deps.sandbox, ref, computerMode, bot.id, ctx);
+          await guardLivePath(deps.sandbox, ref, computerMode, bot.id, storedPath, ctx);
           entries = await deps.sandbox.listFiles(ref, storedPath, ctx);
         } else {
           entries = await deps.home.list(computer.homeKey, storedPath, ctx);
         }
         return entries.map((entry) => ({
           ...entry,
-          path: displayBotWorkspacePath(computerMode, bot.id, input.path, entry.path),
+          path: displayBotWorkspacePath(computerMode, bot.id, requested, entry.path),
         }));
       }),
       readFile: authed.computer.readFile.handler(async ({ context, input }) => {
         const bot = await repos.getBot(context.actor, input.botId);
         if (!bot.computer) throw new IsolationError();
-        const computerMode = parseComputerMode(bot.computer.scope);
+        const computer = bot.computer;
+        const computerMode = parseComputerMode(computer.scope);
+        const storedPath = containedUserPath(computerMode, bot.id, input.path);
+        if (isWorkspaceDirectory(computerMode, bot.id, storedPath)) {
+          throw new ORPCError("NOT_FOUND", { message: "file not found" });
+        }
         const ctx = computerContext(context.actor, bot.id, "read");
-        const storedPath = resolveBotWorkspacePath(computerMode, bot.id, input.path);
-        let content: string;
-        if (bot.computer.state === "running" && bot.computer.providerRef) {
+        const live = computer.state === "running" && Boolean(computer.providerRef);
+        const readAll = live
+          ? (maxBytes: number) => {
+              const ref = toComputerRef(computer);
+              return deps.sandbox.readFile(ref, storedPath, ctx, { maxBytes });
+            }
+          : (maxBytes: number) =>
+              readHomeBytes(deps.home, computer.homeKey, storedPath, ctx, maxBytes);
+        const readRange = live
+          ? (offset: number, length: number) => {
+              const ref = toComputerRef(computer);
+              return readSandboxByteRange(deps.sandbox, ref, storedPath, offset, length, ctx);
+            }
+          : (offset: number, length: number) =>
+              readHomeRange(deps.home, computer.homeKey, storedPath, ctx, offset, length);
+        if (live) {
+          const ref = toComputerRef(computer);
           await deps.prisma.computer.updateMany({
-            where: { id: bot.computer.id, state: "running" },
+            where: { id: computer.id, state: "running" },
             data: { updatedAt: new Date() },
           });
-          scheduleComputerSleep(deps.jobs, bot.computer.id);
-          const bytes = await deps.sandbox
-            .readFile(toComputerRef(bot.computer), storedPath, ctx, {
-              maxBytes: MAX_COMPUTER_TEXT_FILE_BYTES,
-            })
-            .catch((error: unknown) => {
-              if (error instanceof Error && /exceeds|too large/i.test(error.message)) {
-                throw new ORPCError("BAD_REQUEST", { message: "file is too large to preview" });
-              }
-              throw error;
-            });
-          try {
-            content = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-          } catch {
-            throw new ORPCError("BAD_REQUEST", { message: "file is not a text file" });
-          }
+          scheduleComputerSleep(deps.jobs, computer.id);
+          await guardLivePath(deps.sandbox, ref, computerMode, bot.id, storedPath, ctx);
+        }
+        const page = await readChatTextPage({
+          offset: input.offset ?? 1,
+          limit: input.limit ?? CHAT_FILE_READ_MAX_LINES,
+          readAll,
+          readRange,
+        }).catch(fileRpcError);
+        return { path: input.path, ...page, contentHash: chatTextContentHash(page) };
+      }),
+      saveFile: authed.computer.saveFile.handler(async ({ context, input }) => {
+        const bot = await repos.getBot(context.actor, input.botId);
+        if (!bot.computer) throw new IsolationError();
+        const computer = bot.computer;
+        const computerMode = parseComputerMode(computer.scope);
+        const storedPath = containedUserPath(computerMode, bot.id, input.path);
+        if (isWorkspaceDirectory(computerMode, bot.id, storedPath)) {
+          throw new ORPCError("BAD_REQUEST", { message: "Path escapes the bot workspace" });
+        }
+        const content = new TextEncoder().encode(input.content);
+        if (content.byteLength > CHAT_FILE_TEXT_BYTES) {
+          throw new ORPCError("BAD_REQUEST", { message: "file is too large to save" });
+        }
+        if (computer.state === "booting" || computer.state === "suspending") {
+          throw new ORPCError("CONFLICT", { message: COMPUTER_BUSY });
+        }
+        const ctx = computerContext(context.actor, bot.id, "save");
+        const live = computer.state === "running" && Boolean(computer.providerRef);
+        if (live && computer.providerRef) {
+          const providerRef = computer.providerRef;
+          const held = await deps.prisma.computer.updateMany({
+            where: { id: computer.id, state: "running", providerRef },
+            data: { updatedAt: new Date() },
+          });
+          if (held.count !== 1) throw new ORPCError("CONFLICT", { message: COMPUTER_BUSY });
+          const ref = toComputerRef(computer);
+          await ensureComputerWorkspaceLayout(deps.sandbox, ref, computerMode, bot.id, ctx);
+          await guardLivePath(deps.sandbox, ref, computerMode, bot.id, storedPath, ctx);
+          await assertUnchanged(input.expectedContentHash, () =>
+            deps.sandbox.readFile(ref, storedPath, ctx, { maxBytes: CHAT_FILE_TEXT_BYTES }),
+          );
+          await writeContainedSandboxFile(
+            deps.sandbox,
+            ref,
+            storedPath,
+            content,
+            liveContainmentPrefixes(computerMode, bot.id),
+            ctx,
+          ).catch(fileRpcError);
+          const still = await deps.prisma.computer.updateMany({
+            where: { id: computer.id, state: "running", providerRef },
+            data: { updatedAt: new Date() },
+          });
+          if (still.count !== 1) throw new ORPCError("CONFLICT", { message: COMPUTER_BUSY });
+          scheduleComputerSleep(deps.jobs, computer.id);
         } else {
-          try {
-            content = await deps.home.readFile(bot.computer.homeKey, storedPath, ctx, {
-              maxBytes: MAX_COMPUTER_TEXT_FILE_BYTES,
-            });
-          } catch (error) {
-            if (error instanceof Error && error.message.startsWith("agent home file exceeds ")) {
-              throw new ORPCError("BAD_REQUEST", { message: "file is too large to preview" });
+          await assertUnchanged(input.expectedContentHash, () =>
+            readHomeBytes(deps.home, computer.homeKey, storedPath, ctx, CHAT_FILE_TEXT_BYTES),
+          );
+          await deps.home.writeFile(computer.homeKey, storedPath, input.content, ctx);
+        }
+        let tracked = false;
+        if (bot.thread) {
+          const event = {
+            spaceId: context.actor.spaceId,
+            threadId: bot.thread.id,
+            botId: bot.id,
+            type: "computer.command" as const,
+            payload: {
+              executionId: randomUUID(),
+              kind: "write_file" as const,
+              command: input.path,
+              cwd: ".",
+              status: "done" as const,
+              exitCode: 0,
+              output: "",
+              bytes: content.byteLength,
+            },
+          };
+          // The bytes are already stored. A second miss stays tracked false instead of failing the save.
+          for (let attempt = 0; attempt < 2 && !tracked; attempt++) {
+            try {
+              await deps.events.append(event);
+              tracked = true;
+            } catch {
+              tracked = false;
             }
-            // The file browser can ask for a file deleted since it last listed.
-            if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-              throw new ORPCError("NOT_FOUND", { message: "file not found" });
-            }
-            throw error;
           }
         }
-        return { path: input.path, content };
+        return { ok: true as const, path: input.path, tracked };
+      }),
+      changedFiles: authed.computer.changedFiles.handler(async ({ context, input }) => {
+        const bot = await repos.getBot(context.actor, input.botId);
+        if (!bot.computer || !bot.thread) throw new IsolationError();
+        const computerMode = parseComputerMode(bot.computer.scope);
+        const seen = new Set<string>();
+        const changed: { path: string; at: string }[] = [];
+        let cursor: string | undefined;
+        for (
+          let page = 0;
+          page < CHANGED_FILE_SCAN_PAGES && changed.length < CHANGED_CHAT_FILES;
+          page++
+        ) {
+          const events = await deps.prisma.event.findMany({
+            where: {
+              spaceId: context.actor.spaceId,
+              threadId: bot.thread.id,
+              botId: bot.id,
+              type: "computer.command",
+              AND: [
+                { payload: { path: ["kind"], equals: "write_file" } },
+                { payload: { path: ["status"], equals: "done" } },
+                { payload: { path: ["exitCode"], equals: 0 } },
+              ],
+            },
+            orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+            take: COMPUTER_COMMAND_HISTORY_EVENTS,
+            ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+            select: { id: true, payload: true, createdAt: true },
+          });
+          if (events.length === 0) break;
+          for (const event of events) {
+            const parsed = ComputerCommandSchema.safeParse(event.payload);
+            if (!parsed.success) continue;
+            const command = parsed.data;
+            if (
+              command.kind !== "write_file" ||
+              command.status !== "done" ||
+              command.exitCode !== 0
+            ) {
+              continue;
+            }
+            if (seen.has(command.command)) continue;
+            try {
+              const stored = userWorkspacePath(computerMode, bot.id, command.command);
+              if (isWorkspaceDirectory(computerMode, bot.id, stored)) continue;
+            } catch {
+              continue;
+            }
+            seen.add(command.command);
+            changed.push({ path: command.command, at: event.createdAt.toISOString() });
+            if (changed.length >= CHANGED_CHAT_FILES) break;
+          }
+          const lastId = events.at(-1)?.id;
+          if (events.length < COMPUTER_COMMAND_HISTORY_EVENTS || !lastId) break;
+          cursor = lastId;
+        }
+        return changed;
       }),
       downloadFile: authed.computer.downloadFile.handler(async ({ context, input }) => {
         const bot = await repos.getBot(context.actor, input.botId);
         const computer = bot.computer;
         if (!computer) throw new IsolationError();
-        // The stopped-computer home store is text-only; binary transfer needs the live machine.
-        if (computer.state !== "running" || !computer.providerRef) {
+        const computerMode = parseComputerMode(computer.scope);
+        const storedPath = containedUserPath(computerMode, bot.id, input.path);
+        if (isWorkspaceDirectory(computerMode, bot.id, storedPath)) {
+          throw new ORPCError("NOT_FOUND", { message: "file not found" });
+        }
+        const maxBytes = attachmentMaxBytes(deps.env);
+        const ctx = computerContext(context.actor, bot.id, "download");
+        if (computer.state === "running" && computer.providerRef) {
+          await keepComputerAwake(deps, computer.id);
+          const ref = toComputerRef(computer);
+          await guardLivePath(deps.sandbox, ref, computerMode, bot.id, storedPath, ctx);
+          const bytes = await deps.sandbox
+            .readFile(ref, storedPath, ctx, { maxBytes })
+            .catch((error: unknown) => {
+              if (isOversizedFileError(error)) {
+                throw new ORPCError("BAD_REQUEST", {
+                  message: `File exceeds the ${attachmentSizeLabel(maxBytes)} download limit.`,
+                });
+              }
+              throw error;
+            });
+          return { path: input.path, contentBase64: Buffer.from(bytes).toString("base64") };
+        }
+        if (!(deps.home instanceof LocalAgentHomeStore)) {
           throw new ORPCError("CONFLICT", { message: "Start the computer first." });
         }
-        await keepComputerAwake(deps, computer.id);
-        const storedPath = resolveBotWorkspacePath(
-          parseComputerMode(computer.scope),
-          bot.id,
-          input.path,
-        );
-        const bytes = await deps.sandbox
-          .readFile(
-            toComputerRef(computer),
-            storedPath,
-            computerContext(context.actor, bot.id, "download"),
-            { maxBytes: attachmentMaxBytes(deps.env) },
-          )
-          .catch((error: unknown) => {
-            if (error instanceof Error && /exceeds|too large/i.test(error.message)) {
-              throw new ORPCError("BAD_REQUEST", {
-                message: `File exceeds the ${attachmentSizeLabel(attachmentMaxBytes(deps.env))} download limit.`,
-              });
-            }
-            throw error;
+        let window: { bytes: Uint8Array; size: number };
+        try {
+          window = await deps.home.readBytes(computer.homeKey, storedPath, ctx, { maxBytes: 0 });
+        } catch (error) {
+          fileRpcError(error);
+        }
+        if (window.size > maxBytes) {
+          throw new ORPCError("BAD_REQUEST", {
+            message: `File exceeds the ${attachmentSizeLabel(maxBytes)} download limit.`,
           });
+        }
+        const { bytes } = await deps.home
+          .readBytes(computer.homeKey, storedPath, ctx, { maxBytes })
+          .catch(fileRpcError);
         return { path: input.path, contentBase64: Buffer.from(bytes).toString("base64") };
       }),
       uploadFile: authed.computer.uploadFile.handler(async ({ context, input }) => {

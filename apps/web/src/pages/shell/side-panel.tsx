@@ -85,7 +85,11 @@ export function ShellSidePanel({
   const { t } = useLingui();
   const open = Boolean(panel && (active || activeGroup || panel === "import-agent"));
   const botTab =
-    panel === "computer" || panel === "routines" || panel === "pages" || panel === "settings"
+    panel === "computer" ||
+    panel === "files" ||
+    panel === "routines" ||
+    panel === "pages" ||
+    panel === "settings"
       ? panel
       : null;
 
