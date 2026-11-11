@@ -3,6 +3,7 @@ import type { AdapterContext } from "@rakazo/adapter-kit";
 import type { BotSecretDestination } from "@rakazo/contracts";
 import {
   asSystem,
+  ciphertextKeyId,
   contentEncryptionOf,
   contentEncryptionStatus,
   createDb,
@@ -338,6 +339,74 @@ describePostgres("vault values under the content keys (PostgreSQL)", () => {
       ).toMatchObject({ fields: [{ value: "fake-rotated-password" }] });
     } finally {
       await system.messagingIdentity.deleteMany({ where: { address: rotateAddress } });
+      await system.organization.deleteMany({ where: { id: member.spaceId } });
+      await system.user.deleteMany({ where: { id: member.userId } });
+    }
+  });
+
+  it("moves items to a version another process rotated to while this one had the old one cached", async () => {
+    const raceAddress = `vault-stale-${randomUUID()}@rakazo.test`;
+    const member = await runAsSystem("vault stale key fixture", () =>
+      provisionMessagingIdentity(
+        sealing.prisma,
+        { provider: "email", address: raceAddress },
+        { signupsEnabled: undefined, signupAllowlist: undefined },
+      ),
+    );
+    // A second process, with its own key cache.
+    const other = createDb(url!, { keyProvider, encryptContent: true });
+    try {
+      for (const name of ["site", "bank"])
+        await runAsTenant(member, () =>
+          storeBotSecret({
+            prisma: sealing.prisma,
+            secretStore,
+            scope: member,
+            destination: { ...login, name } as BotSecretDestination,
+            plaintext: value(`fake-${name}-password`),
+          }),
+        );
+      const reports = new Map<string, string>();
+      const migrate = (prisma: typeof sealing.prisma, mode: "encrypt" | "reencrypt") =>
+        runAsSystem("vault values migration", () =>
+          migrateVaultValues(prisma, secretStore, context, {
+            mode,
+            report: (row, status) => reports.set(row.id, status),
+          }),
+        );
+      const items = () =>
+        system.vaultCredential.findMany({
+          where: { userId: member.userId },
+          orderBy: { name: "asc" },
+        });
+      const versions = () =>
+        system.spaceKey.findMany({
+          where: { spaceId: `user:${member.userId}` },
+          orderBy: { version: "asc" },
+        });
+      await migrate(sealing.prisma, "encrypt");
+      // The other process caches version 1 as the newest.
+      await migrate(other.prisma, "reencrypt");
+      const [first] = await versions();
+      expect((await items()).map((item) => ciphertextKeyId(item.ciphertext))).toEqual([
+        first!.id,
+        first!.id,
+      ]);
+
+      await runAsSystem("vault key rotation", () => rotateVaultKeys(sealing.prisma));
+      const [, second] = await versions();
+      reports.clear();
+      await migrate(other.prisma, "reencrypt");
+      const moved = await items();
+      expect(moved.map((item) => ciphertextKeyId(item.ciphertext))).toEqual([
+        second!.id,
+        second!.id,
+      ]);
+      expect(moved.map((item) => reports.get(item.id))).toEqual(["migrated", "migrated"]);
+    } finally {
+      await other.prisma.$disconnect();
+      await other.pool.end();
+      await system.messagingIdentity.deleteMany({ where: { address: raceAddress } });
       await system.organization.deleteMany({ where: { id: member.spaceId } });
       await system.user.deleteMany({ where: { id: member.userId } });
     }

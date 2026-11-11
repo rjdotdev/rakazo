@@ -1,5 +1,5 @@
 import type { AdapterContext, SecretStore } from "@rakazo/adapter-kit";
-import type { ContentLocation, PrismaClient } from "@rakazo/db";
+import type { ContentLocation, DataKey, PrismaClient } from "@rakazo/db";
 import {
   ContentDecryptionError,
   ciphertextKeyId,
@@ -26,10 +26,6 @@ function ringOf(prisma: PrismaClient) {
   const ring = contentEncryptionOf(prisma)?.ring;
   if (!ring) throw new Error("Vault item encryption is unavailable");
   return ring;
-}
-
-async function seal(prisma: PrismaClient, row: VaultRow, plaintext: string) {
-  return encryptText(await ringOf(prisma).current(keyScope(row)), location(row), plaintext);
 }
 
 /**
@@ -75,8 +71,9 @@ export async function openSealedVaultValue(
   const ring = ringOf(prisma);
   const key = await ring.byId(keyId).catch(async (error: unknown) => {
     // A key its vault no longer has is damaged data, not a key manager outage; listing the
-    // vault's keys fails in an outage too, which then stands.
-    if (!(await ring.all(keyScope(row))).some((stored) => stored.id === keyId))
+    // vault's keys fails in an outage too, which then stands. Listed from the store, since another
+    // process may have just added the key.
+    if (!(await ring.allFresh(keyScope(row))).some((stored) => stored.id === keyId))
       throw new ContentDecryptionError("Vault item names a key that no longer exists");
     throw error;
   });
@@ -106,7 +103,8 @@ function failureReason(step: string, error: unknown) {
  * back, before rolling back to a release that cannot read it. Each row is a compare-and-set on its
  * value and date, so a concurrent save wins; a row that cannot be read or verified stays as it
  * was and is reported with the reason, as is an item already under a vault key that does not
- * open. Values in an external store stay there. Safe to interrupt and rerun.
+ * open. Values in an external store stay there. Safe to interrupt and rerun. Each vault's newest
+ * key comes from the database, not this process's cache, since another process may have rotated it.
  */
 export async function migrateVaultValues(
   prisma: PrismaClient,
@@ -130,9 +128,21 @@ export async function migrateVaultValues(
     failed: 0,
     notMigrated: 0,
   };
+  // Each vault's keys, read from the store once per batch rather than from this process's cache:
+  // another process may have rotated a vault since, and items must move to its newest version.
+  const fresh = new Map<string, Promise<DataKey[]>>();
+  const keysOf = (scope: string) => {
+    let keys = fresh.get(scope);
+    if (!keys) {
+      keys = ringOf(prisma).allFresh(scope);
+      fresh.set(scope, keys);
+    }
+    return keys;
+  };
   let cursor = "";
   while (true) {
     context.signal.throwIfAborted();
+    fresh.clear();
     const batch = await prisma.vaultCredential.findMany({
       where: { id: { gt: cursor } },
       orderBy: { id: "asc" },
@@ -162,10 +172,13 @@ export async function migrateVaultValues(
       let step = "read";
       let status: "migrated" | "concurrent" | "failed";
       try {
-        const newest =
-          options.mode === "reencrypt"
-            ? (await ringOf(prisma).all(keyScope(row))).at(-1)
-            : undefined;
+        const scope = keyScope(row);
+        let newest = options.mode === "reencrypt" ? (await keysOf(scope)).at(-1) : undefined;
+        if (keyId && keyId === newest?.id) {
+          // Read again before calling it current: a rotation since the batch began must move it.
+          fresh.delete(scope);
+          newest = (await keysOf(scope)).at(-1);
+        }
         if (keyId && (options.mode === "encrypt" || keyId === newest?.id)) {
           // Already under its vault's key (its newest, to re-encrypt): read, never rewritten, so
           // an unreadable item is reported.
@@ -184,7 +197,10 @@ export async function migrateVaultValues(
         let next: string;
         if (options.mode === "decrypt")
           next = (await store.put(plaintext, context, { recordId: row.id })).ciphertext;
-        else if (options.mode === "encrypt") next = await seal(prisma, row, plaintext);
+        else if (options.mode === "encrypt") {
+          const key = (await keysOf(scope)).at(-1) ?? (await ringOf(prisma).current(scope));
+          next = encryptText(key, location(row), plaintext);
+        }
         // Its vault's keys were deleted with its member or Space after the item was read.
         else if (!newest) throw new VaultKeyOwnerGoneError();
         else next = encryptText(newest, location(row), plaintext);

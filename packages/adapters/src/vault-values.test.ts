@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { AdapterContext, SecretStore } from "@rakazo/adapter-kit";
 import type { BotSecretDestination } from "@rakazo/contracts";
-import type { SpaceKeyRecord } from "@rakazo/db";
+import type { PrismaClient, SpaceKeyRecord, SpaceKeyStore } from "@rakazo/db";
 import {
   ContentKeyRing,
   ciphertextKeyId,
@@ -65,21 +65,18 @@ function encryptedDatabase(encryptWrites = true) {
     keys.splice(0, keys.length, ...keys.filter((key) => key.spaceId !== scope));
   };
   const provider = new LocalKeyProvider([{ id: "test", key: randomBytes(32) }]);
-  const ring = new ContentKeyRing(
-    provider,
-    {
-      forSpace: async (spaceId) => keys.filter((key) => key.spaceId === spaceId),
-      byId: async (id) => keys.find((key) => key.id === id),
-      insert: async (record) => {
-        if (gone.has(record.spaceId)) throw new VaultKeyOwnerGoneError();
-        keys.push(record);
-        return record;
-      },
-      rowContext: async () => undefined,
-      sampleByMasterKey: async () => [],
+  const store: SpaceKeyStore = {
+    forSpace: async (spaceId) => keys.filter((key) => key.spaceId === spaceId),
+    byId: async (id) => keys.find((key) => key.id === id),
+    insert: async (record) => {
+      if (gone.has(record.spaceId)) throw new VaultKeyOwnerGoneError();
+      keys.push(record);
+      return record;
     },
-    { encryptWrites },
-  );
+    rowContext: async () => undefined,
+    sampleByMasterKey: async () => [],
+  };
+  const ring = new ContentKeyRing(provider, store, { encryptWrites });
   Object.assign(db.prisma, {
     $contentEncryption: () => ({ ring }),
     // Each vault key's scope once, after the cursor, as GROUP BY returns them.
@@ -112,7 +109,19 @@ function encryptedDatabase(encryptWrites = true) {
         },
       },
     );
-  return { ...db, keys, deleteOwner, provider, ring, migrate, reports, reasons };
+  /** Another process on the same rows and keys, with its own key cache. */
+  const otherProcess = () => {
+    const other = new ContentKeyRing(provider, store, { encryptWrites });
+    const prisma = { ...db.prisma, $contentEncryption: () => ({ ring: other }) } as PrismaClient;
+    const reports = new Map<string, string>();
+    const migrate = (mode: "encrypt" | "reencrypt") =>
+      migrateVaultValues(prisma, secretStore, context, {
+        mode,
+        report: (row, status) => reports.set(row.id, status),
+      });
+    return { ring: other, prisma, migrate, reports };
+  };
+  return { ...db, keys, deleteOwner, otherProcess, provider, ring, migrate, reports, reasons };
 }
 
 type Db = ReturnType<typeof encryptedDatabase>;
@@ -842,6 +851,57 @@ describe("moving vault values to the envelope keys", () => {
       expect(row(db, "site").ciphertext === keyed).toBe(command === "reencrypt");
     },
   );
+
+  /** Two items under the member's first vault key, and a second process that has it cached. */
+  async function cachedElsewhere() {
+    const db = encryptedDatabase();
+    await save(db, login, loginValue());
+    await save(db, card, JSON.stringify(fakeCard));
+    await db.migrate();
+    const other = db.otherProcess();
+    expect(await other.migrate("reencrypt")).toMatchObject({ verified: 2, migrated: 0 });
+    const keyOf = (name: string) => ciphertextKeyId(row(db, name).ciphertext);
+    const versionOf = (name: string) => db.keys.find((key) => key.id === keyOf(name))?.version;
+    return { db, other, versionOf };
+  }
+
+  it("moves items to a version another process rotated to while this one had the old one cached", async () => {
+    const { db, other, versionOf } = await cachedElsewhere();
+    expect(await rotateVaultKeys(db.prisma)).toMatchObject({ rotated: 1 });
+    expect(await other.migrate("reencrypt")).toMatchObject({ migrated: 2, verified: 0 });
+    expect([versionOf("site"), versionOf("visa")]).toEqual([2, 2]);
+    expect([...other.reports.values()]).toEqual(["migrated", "migrated"]);
+  });
+
+  it("does not move items back to its own rotation when another process rotated after it", async () => {
+    const { db, other, versionOf } = await cachedElsewhere();
+    // rotate --reencrypt in this process adds version 2; the other process adds 3 and moves both.
+    expect(await rotateVaultKeys(other.prisma)).toMatchObject({ rotated: 1 });
+    expect(await rotateVaultKeys(db.prisma)).toMatchObject({ rotated: 1 });
+    expect(await db.migrate("reencrypt")).toMatchObject({ migrated: 2 });
+    expect([versionOf("site"), versionOf("visa")]).toEqual([3, 3]);
+    expect(await other.migrate("reencrypt")).toMatchObject({ migrated: 0, verified: 2 });
+    expect([versionOf("site"), versionOf("visa")]).toEqual([3, 3]);
+  });
+
+  it("migrates items under a version another process rotated to while this one had the old one cached", async () => {
+    const { db, other, versionOf } = await cachedElsewhere();
+    await rotateVaultKeys(db.prisma);
+    const { ciphertext } = await secretStore.put(loginValue(), context, { recordId: "old" });
+    db.rows().push({ ...row(db, "site"), id: "old", name: "old", ciphertext });
+    expect(await other.migrate("encrypt")).toMatchObject({ migrated: 1 });
+    expect(versionOf("old")).toBe(2);
+  });
+
+  it("reports a key manager outage, not a missing key, for a version another process created", async () => {
+    const { db, other } = await cachedElsewhere();
+    await rotateVaultKeys(db.prisma);
+    await db.migrate("reencrypt");
+    vi.spyOn(db.provider, "unwrap").mockRejectedValue(new Error("key manager unavailable"));
+    await expect(openVaultValue(other.prisma, secretStore, row(db, "site"))).rejects.toThrow(
+      "key manager unavailable",
+    );
+  });
 
   it("does what each command must to each kind of item", async () => {
     const modes = ["migrate", "decrypt", "reencrypt", "rotate"] as const;
