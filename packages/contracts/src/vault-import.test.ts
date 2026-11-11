@@ -240,6 +240,23 @@ describe("parseVaultCsv", () => {
     });
   });
 
+  it("uses each row's first password column that isn't empty, keeping its spaces", () => {
+    const csv = [
+      "name,url,username,password,login_password",
+      "A,https://a.example.com,ay,, fake-a ",
+      "B,https://b.example.com,bee,fake-b,fake-other",
+      "C,https://c.example.com,cee,,",
+    ].join("\n");
+    expect(parseVaultCsv(csv)).toMatchObject({
+      rows: [
+        { origin: "https://a.example.com", password: " fake-a " },
+        { origin: "https://b.example.com", password: "fake-b" },
+      ],
+      skipped: { noPassword: 1 },
+      problems: [{ line: 3, label: "C", reason: "noPassword" }],
+    });
+  });
+
   it("counts a row with a value too long to save, and keeps the others", () => {
     const csv = [
       "url,username,password",

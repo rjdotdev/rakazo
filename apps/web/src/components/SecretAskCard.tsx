@@ -7,10 +7,10 @@ import {
   normalizeOneTimeCode,
   vaultKind,
 } from "@rakazo/contracts";
+import { secretAnswerErrorText } from "@rakazo/i18n/vault";
 import { Button, Input } from "@rakazo/ui-web";
 import { Check } from "lucide-react";
 import { useEffect, useState } from "react";
-import { secretAnswerErrorText } from "../lib/user-error";
 import type { AskBlock, AskCardProps } from "./AskCard";
 import { BuiCard } from "./ai/primitives";
 import { siteHost, VaultTile } from "./vault/kinds";

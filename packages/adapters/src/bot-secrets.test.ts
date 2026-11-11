@@ -414,6 +414,27 @@ describe("authenticated secret requests", () => {
     expect(recordUse).toHaveBeenCalledTimes(3);
   });
 
+  it("records no use for a connection never made, and one for a request cut off", async () => {
+    const { input, fetch } = await fixture();
+    const recordUse = vi.fn(async () => {});
+    const failed = (code: string, syscall?: string) =>
+      new TypeError("fetch failed", { cause: Object.assign(new Error(code), { code, syscall }) });
+    fetch.mockRejectedValueOnce(failed("ECONNREFUSED", "connect"));
+    expect(await requestWithBotSecret({ ...input, recordUse })).toHaveProperty("error");
+    fetch.mockRejectedValueOnce(failed("CERT_HAS_EXPIRED"));
+    expect(await requestWithBotSecret({ ...input, recordUse })).toHaveProperty("error");
+    expect(recordUse).not.toHaveBeenCalled();
+    fetch.mockRejectedValueOnce(failed("UND_ERR_HEADERS_TIMEOUT"));
+    expect(await requestWithBotSecret({ ...input, recordUse })).toHaveProperty("error");
+    expect(recordUse).toHaveBeenCalledOnce();
+    // A bad TLS record or an unreachable error may come once the request is out.
+    fetch.mockRejectedValueOnce(failed("ERR_SSL_WRONG_VERSION_NUMBER"));
+    expect(await requestWithBotSecret({ ...input, recordUse })).toHaveProperty("error");
+    fetch.mockRejectedValueOnce(failed("EHOSTUNREACH", "read"));
+    expect(await requestWithBotSecret({ ...input, recordUse })).toHaveProperty("error");
+    expect(recordUse).toHaveBeenCalledTimes(3);
+  });
+
   it("delivers plain-HTTP private destination requests directly when the owner opts in", async () => {
     vi.stubEnv("RAKAZO_SECRETS_ALLOW_PRIVATE_HTTP", "1");
     const encrypted = await secretStore.put(

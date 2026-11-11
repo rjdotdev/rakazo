@@ -19,7 +19,7 @@ import {
   listBotSecrets,
   listVaultItems,
   loadBotCommandEnvironment,
-  loadCommandRedactions,
+  loadCommandVariables,
   loadLoginPasswordRedactions,
   newVaultItemName,
   prepareBotSecret,
@@ -574,7 +574,9 @@ describe("an item bots may not use", () => {
     expect(await loadLoginPasswordRedactions(db.prisma, secretStore, bot)).toContain(
       "fake-password-1",
     );
-    expect(await loadCommandRedactions(db.prisma, secretStore, bot)).toContain("fake-command-1");
+    expect((await loadCommandVariables(db.prisma, secretStore, bot)).redactions).toContain(
+      "fake-command-1",
+    );
     // The owner still sees each item, and can remove it.
     expect(
       (await listVaultItems(db.prisma, secretStore, scope)).map((item) => [item.name, item.policy]),
@@ -624,7 +626,9 @@ describe("an item bots may not use", () => {
     expect(await loadLoginPasswordRedactions(db.prisma, secretStore, bot)).toContain(
       "fake-password-1",
     );
-    expect(await loadCommandRedactions(db.prisma, secretStore, bot)).toContain("fake-command-1");
+    expect((await loadCommandVariables(db.prisma, secretStore, bot)).redactions).toContain(
+      "fake-command-1",
+    );
     // Saving over its name says only that the name can't be used, nothing of the item.
     for (const answer of [
       await tool("request_secret", { label: "Key", purpose: "api_key", credential }),

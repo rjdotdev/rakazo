@@ -6,6 +6,7 @@ import type { Root } from "react-dom/client";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import Vault from "../app/(settings)/vault";
+import { resetI18nForTests } from "./i18n";
 
 // RFC 6238's test key, written in pieces so it never reads as a saved secret.
 const TEST_KEY = ("GEZDGNBV" + "GY3TQOJQ").repeat(2);
@@ -391,6 +392,7 @@ async function open(title: string) {
 }
 
 beforeEach(() => {
+  resetI18nForTests();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   state.spaceId = undefined;
   state.ios26 = false;

@@ -12,7 +12,6 @@ import type {
 } from "@rakazo/contracts";
 import {
   cardExpiry,
-  hasAuthenticatorKey,
   isIdentityConfirmationRequired,
   newVaultImportRows,
   VAULT_KINDS,
@@ -20,6 +19,7 @@ import {
   vaultImportProblems,
   vaultKind,
 } from "@rakazo/contracts";
+import { vaultImportText, vaultSaveNotice } from "@rakazo/i18n/vault";
 import * as Clipboard from "expo-clipboard";
 import type { NativeStackNavigationOptions } from "expo-router";
 import { useFocusEffect, useLocalSearchParams, useNavigation } from "expo-router";
@@ -243,33 +243,13 @@ export default function Vault() {
     }
     if (!csv || !focused.current) return;
     if ("error" in csv) {
-      const problems = {
-        too_large: t`This file is too large to import.`,
-        unreadable: t`This file can't be read as CSV.`,
-        no_logins: t`No website and password columns found.`,
-      };
-      Alert.alert(t`Import CSV`, problems[csv.error]);
+      Alert.alert(t`Import CSV`, vaultImportText().fileProblems[csv.error]);
       return;
     }
     const { skipped } = csv;
     const { problems: fileProblems } = csv;
     const plan = newVaultImportRows(csv.rows, items ?? [], csv.lines);
-    const labels = {
-      added: t`Added`,
-      toAdd: t`To add`,
-      duplicate: t`Already saved`,
-      notHttps: t`Not on an HTTPS site`,
-      noPassword: t`No password`,
-      full: t`Vault full`,
-      notSaved: t`Not saved`,
-    };
-    const reasons = {
-      notHttps: labels.notHttps,
-      noPassword: labels.noPassword,
-      duplicate: labels.duplicate,
-      invalid: labels.notSaved,
-      limit: labels.full,
-    };
+    const { labels, reasons } = vaultImportText();
     // A short list of the rows left out: the counts already say how many.
     const lines = (result?: VaultImportResult) => {
       const problems = vaultImportProblems(fileProblems, plan, result);
@@ -342,24 +322,8 @@ export default function Vault() {
     });
     setItems((current) => withItem(current ?? [], saved));
     // An older server drops what it doesn't know silently, but the item is saved, so say what.
-    const dropped = [
-      policy === "ask" && saved.policy !== "ask"
-        ? t`Saved, but this server can't ask you first.`
-        : policy && saved.policy === undefined
-          ? t`Saved, but this server can't block bots yet.`
-          : access?.allBots === false &&
-            saved.allBots === undefined &&
-            t`Saved, but this server can't limit an item to chosen bots.`,
-      change.alsoOn &&
-        saved.alsoOn === undefined &&
-        t`Saved, but this server fills logins only on their own site.`,
-      hasAuthenticatorKey(change.value) &&
-        // A preview that couldn't be read says nothing of the key.
-        saved.preview &&
-        !saved.preview.otp &&
-        t`Saved, but this server can't keep authenticator keys yet.`,
-    ].filter(Boolean);
-    if (dropped.length) afterEditing.current = { name: saved.name, notice: dropped.join(" ") };
+    const notice = vaultSaveNotice({ ...change, ...access, ...(policy ? { policy } : {}) }, saved);
+    if (notice) afterEditing.current = { name: saved.name, notice };
   }
 
   async function remove(name: string) {

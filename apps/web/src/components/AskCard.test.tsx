@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { i18n } from "@lingui/core";
 import type { LoginFieldInput } from "@rakazo/contracts";
 import { BLOCKED_ITEM_ANSWER, UNCHOSEN_ITEM_ANSWER } from "@rakazo/contracts";
 import type { ReactNode } from "react";
@@ -40,6 +41,9 @@ let root: Root;
 let container: HTMLDivElement;
 
 beforeEach(() => {
+  // The app renders only once I18nBootstrap has activated a locale; the refusal text is shared.
+  i18n.load("en", {});
+  i18n.activate("en");
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   container = document.createElement("div");
   document.body.append(container);

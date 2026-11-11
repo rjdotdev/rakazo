@@ -150,8 +150,7 @@ export function parseVaultCsv(text: string): VaultCsv {
       COLUMNS[column].map((alias) => keys.indexOf(alias)).filter((index) => index >= 0),
     ]),
   ) as Record<Column, number[]>;
-  const password = columns.password[0];
-  if (!columns.url.length || password === undefined) return { error: "no_logins" };
+  if (!columns.url.length || !columns.password.length) return { error: "no_logins" };
   const value = (record: string[], column: Column) =>
     columns[column].map((index) => (record[index] ?? "").trim()).find(Boolean) ?? "";
   const skipped = noneSkipped();
@@ -168,16 +167,17 @@ export function parseVaultCsv(text: string): VaultCsv {
       continue;
     }
     const origin = vaultImportOrigin(value(record, "url"));
+    // The first that isn't empty, as for the other columns, but a password keeps its spaces.
+    const password = columns.password.map((index) => record[index] ?? "").find(Boolean) ?? "";
     const row = VaultImportRow.safeParse({
       title: shortTitle(value(record, "title")).trim(),
       origin,
       username: value(record, "username"),
-      // A password keeps its spaces.
-      password: record[password] ?? "",
+      password,
     });
     const reason: VaultImportReason | undefined = !origin
       ? "notHttps"
-      : !record[password]
+      : !password
         ? "noPassword"
         : // Also what the server refuses: a site no login may be for, or a value too long once saved.
           !row.success ||

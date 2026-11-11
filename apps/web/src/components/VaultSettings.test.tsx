@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { i18n } from "@lingui/core";
 import type { BotSecretMetadata, SettingsScope } from "@rakazo/contracts";
 import { encodeCardSecret, encodeLoginSecret, noneSkipped } from "@rakazo/contracts";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -200,6 +201,9 @@ async function startNew(kind: string) {
 }
 
 beforeEach(() => {
+  // The vault text both apps share is translated at run time, so it needs a locale.
+  i18n.load("en", {});
+  i18n.activate("en");
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vault.list.mockReset().mockResolvedValue(rows);
   vault.put.mockReset().mockResolvedValue(rows[0]);

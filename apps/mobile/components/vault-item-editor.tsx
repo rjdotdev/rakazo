@@ -11,6 +11,7 @@ import {
   typedOtherSites,
   VAULT_ALSO_ON_LIMIT,
 } from "@rakazo/contracts";
+import { secretAnswerErrorText } from "@rakazo/i18n/vault";
 import type { ReactNode } from "react";
 import { useRef, useState } from "react";
 import type { TextInputInstance, TextInputProps } from "react-native";
@@ -20,7 +21,7 @@ import { mobileTokens } from "../lib/appearance";
 import type { MobileBot } from "../lib/mobile-types";
 import { useThemedStyles } from "../lib/native";
 import { useSecretSheetClose } from "../lib/secret-sheet-close";
-import { errorText, secretAnswerErrorText } from "../lib/user-error";
+import { errorText } from "../lib/user-error";
 import type { ApiAuthType, VaultBots, VaultDraft, VaultItem, VaultSave } from "../lib/vault";
 import {
   draftSave,

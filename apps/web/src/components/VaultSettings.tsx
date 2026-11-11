@@ -7,7 +7,6 @@ import type {
   VaultRevealed,
 } from "@rakazo/contracts";
 import {
-  hasAuthenticatorKey,
   isIdentityConfirmationRequired,
   parseVaultCsv,
   VAULT_IMPORT_FILE_LIMIT,
@@ -15,6 +14,7 @@ import {
   vaultKind,
 } from "@rakazo/contracts";
 import { fetchFresh, writeSaved } from "@rakazo/core/query";
+import { vaultSaveNotice } from "@rakazo/i18n/vault";
 import {
   Button,
   DropdownMenu,
@@ -131,33 +131,17 @@ export function VaultSettings({
     const fresh = await refresh();
     setError(fresh ? null : t`Could not load credentials.`);
     // An older server drops what it doesn't know silently, but the item is saved, so say what.
-    const dropped = [
-      result.policy === "ask" && saved.policy !== "ask"
-        ? t`Saved, but this server can't ask you first.`
-        : result.policy && saved.policy === undefined
-          ? t`Saved, but this server can't block bots yet.`
-          : result.allBots === false &&
-            saved.allBots === undefined &&
-            t`Saved, but this server can't limit an item to chosen bots.`,
-      result.alsoOn &&
-        saved.alsoOn === undefined &&
-        t`Saved, but this server fills logins only on their own site.`,
-      hasAuthenticatorKey(result.value) &&
-        // A preview that couldn't be read says nothing of the key.
-        saved.preview &&
-        !saved.preview.otp &&
-        t`Saved, but this server can't keep authenticator keys yet.`,
-    ].filter(Boolean);
+    const notice = vaultSaveNotice(result, saved);
     // Which bots may use it is shown as saved even when the list can't be read again, so it never
     // reads as blocked once bots can use it, and an item opened with a notice is there.
-    if (!fresh && (result.policy || result.allBots !== undefined || dropped.length))
+    if (!fresh && (result.policy || result.allBots !== undefined || notice))
       await writeSaved(queryClient, list.queryKey, (prev = []) => [
         ...prev.filter((row) => row.name !== saved.name),
         saved,
       ]);
-    if (dropped.length) {
+    if (notice) {
       setOpened(saved.name);
-      setDetailError(dropped.join(" "));
+      setDetailError(notice);
     }
   }
 

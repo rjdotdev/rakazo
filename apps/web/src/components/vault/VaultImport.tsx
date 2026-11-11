@@ -6,6 +6,7 @@ import type {
   VaultImportRow,
 } from "@rakazo/contracts";
 import { newVaultImportRows, vaultImportCounts, vaultImportProblems } from "@rakazo/contracts";
+import { vaultImportText } from "@rakazo/i18n/vault";
 import { Button } from "@rakazo/ui-web";
 import { useState } from "react";
 import { VaultPageHeader } from "./VaultPageHeader";
@@ -35,24 +36,9 @@ export function VaultImportPage({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<VaultImportResult>();
-  const labels = {
-    added: t`Added`,
-    toAdd: t`To add`,
-    duplicate: t`Already saved`,
-    notHttps: t`Not on an HTTPS site`,
-    noPassword: t`No password`,
-    full: t`Vault full`,
-    notSaved: t`Not saved`,
-  };
+  const { labels, reasons, fileProblems } = vaultImportText();
 
   const problems = "rows" in csv && plan ? vaultImportProblems(csv.problems, plan, result) : [];
-  const reasons = {
-    notHttps: labels.notHttps,
-    noPassword: labels.noPassword,
-    duplicate: labels.duplicate,
-    invalid: labels.notSaved,
-    limit: labels.full,
-  };
   const more = problems.length - PROBLEMS_SHOWN;
 
   async function save() {
@@ -74,15 +60,7 @@ export function VaultImportPage({
     <div data-testid="vault-import-page" className="space-y-4">
       <VaultPageHeader title={t`Import CSV`} onBack={() => !busy && onBack()} />
       {"error" in csv ? (
-        <p className="text-body-sm text-destructive">
-          {
-            {
-              too_large: t`This file is too large to import.`,
-              unreadable: t`This file can't be read as CSV.`,
-              no_logins: t`No website and password columns found.`,
-            }[csv.error]
-          }
-        </p>
+        <p className="text-body-sm text-destructive">{fileProblems[csv.error]}</p>
       ) : plan ? (
         <ul className="overflow-hidden rounded-xl bg-muted/50">
           {vaultImportCounts(csv.skipped, plan, result).map(([kind, count]) => (
