@@ -7,6 +7,7 @@ import {
   EncryptedSecretStore,
   LocalArtifactStore,
   migrateVaultValues,
+  rotateVaultKeys,
   unwrapEnvFromKeyManager,
   upgradeLegacySecrets,
   withSecretPersistence,
@@ -36,7 +37,9 @@ const USAGE = `Usage: content-encryption <command> [--dry-run]
                        into their encrypted credentials
   rotate [--reencrypt] Re-wrap space keys under the active master key; with
                        --reencrypt also add new data keys and re-encrypt content
-  reencrypt            Re-encrypt content still under an older data key
+                       and vault values
+  reencrypt            Re-encrypt content and vault values still under an older
+                       data key
   decrypt              Write plaintext back, after CONTENT_ENCRYPTION=off or
                        before rolling back to an older release
   export [--space <id>] [--thread <id>] [--bot <id>] [--output <file>]
@@ -173,7 +176,7 @@ async function upgradeCredentials() {
   if (counts.failed) process.exitCode = 1;
 }
 
-async function rewriteVaultValues(mode: "encrypt" | "decrypt") {
+async function rewriteVaultValues(mode: "encrypt" | "reencrypt" | "decrypt") {
   const counts = await migrateVaultValues(
     prisma,
     new EncryptedSecretStore(resolveEncryptionKey(process.env)),
@@ -184,10 +187,17 @@ async function rewriteVaultValues(mode: "encrypt" | "decrypt") {
       spaceId: "migration",
       signal: controller.signal,
     },
-    { mode, dryRun, report: (row, status) => write(`vault item ${row.id}: ${status}`) },
+    {
+      mode,
+      dryRun,
+      report: (row, status, reason) =>
+        write(`vault item ${row.id}: ${status}${reason ? ` (${reason})` : ""}`),
+    },
   );
   write(
-    `vault items: ${counts.migrated} rewritten, ${counts.planned} planned, ${counts.verified} current, ${counts.concurrent} changed concurrently, ${counts.failed} failed`,
+    `vault items: ${counts.migrated} rewritten, ${counts.planned} planned, ${counts.verified} current, ${counts.concurrent} changed concurrently, ${counts.failed} failed${
+      counts.notMigrated ? `, ${counts.notMigrated} not under a vault key (run migrate)` : ""
+    }`,
   );
   if (counts.failed) process.exitCode = 1;
 }
@@ -248,10 +258,22 @@ try {
         write(
           `data keys: ${await rotateSpaceDataKeys(prisma, contentKeys, { signal: controller.signal })} spaces rotated`,
         );
+        const vaultKeys = await rotateVaultKeys(prisma, {
+          signal: controller.signal,
+          report: (scope, status, reason) =>
+            write(`vault key ${scope}: ${status}${reason ? ` (${reason})` : ""}`),
+        });
+        write(
+          `vault keys: ${vaultKeys.rotated} rotated, ${vaultKeys.ownerGone} owner gone, ${vaultKeys.failed} failed`,
+        );
+        // Items under the keys that did rotate still move; the command fails once it is done.
+        if (vaultKeys.failed) process.exitCode = 1;
         await rewriteContent("reencrypt");
+        await rewriteVaultValues("reencrypt");
       }
     } else if (command === "reencrypt") {
       await rewriteContent("reencrypt");
+      await rewriteVaultValues("reencrypt");
     } else if (command === "export") {
       await exportJsonLines();
     } else {

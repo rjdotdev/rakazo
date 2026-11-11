@@ -2,7 +2,12 @@ import { randomBytes } from "node:crypto";
 import type { AdapterContext, SecretStore } from "@rakazo/adapter-kit";
 import type { BotSecretDestination } from "@rakazo/contracts";
 import type { SpaceKeyRecord } from "@rakazo/db";
-import { ContentKeyRing, LocalKeyProvider } from "@rakazo/db";
+import {
+  ContentKeyRing,
+  ciphertextKeyId,
+  LocalKeyProvider,
+  VaultKeyOwnerGoneError,
+} from "@rakazo/db";
 import type { Mock } from "vitest";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -22,7 +27,7 @@ import { computerTools } from "./run-tools-computer.js";
 import { ComposedSecretStore } from "./secret-store-factory.js";
 import { infisicalFake } from "./secret-store-fake.js";
 import { EncryptedSecretStore } from "./secrets.js";
-import { migrateVaultValues } from "./vault-values.js";
+import { migrateVaultValues, openVaultValue, rotateVaultKeys } from "./vault-values.js";
 
 const scope = { userId: "user-1", spaceId: "space-1" };
 // The same store the previous release reads vault values with.
@@ -53,6 +58,12 @@ const context: AdapterContext = {
 function encryptedDatabase(encryptWrites = true) {
   const db = fakeDatabase();
   const keys: SpaceKeyRecord[] = [];
+  // Vault scopes whose member or Space was deleted: their keys are shredded and none is created.
+  const gone = new Set<string>();
+  const deleteOwner = (scope: string) => {
+    gone.add(scope);
+    keys.splice(0, keys.length, ...keys.filter((key) => key.spaceId !== scope));
+  };
   const provider = new LocalKeyProvider([{ id: "test", key: randomBytes(32) }]);
   const ring = new ContentKeyRing(
     provider,
@@ -60,6 +71,7 @@ function encryptedDatabase(encryptWrites = true) {
       forSpace: async (spaceId) => keys.filter((key) => key.spaceId === spaceId),
       byId: async (id) => keys.find((key) => key.id === id),
       insert: async (record) => {
+        if (gone.has(record.spaceId)) throw new VaultKeyOwnerGoneError();
         keys.push(record);
         return record;
       },
@@ -68,15 +80,39 @@ function encryptedDatabase(encryptWrites = true) {
     },
     { encryptWrites },
   );
-  Object.assign(db.prisma, { $contentEncryption: () => ({ ring }) });
+  Object.assign(db.prisma, {
+    $contentEncryption: () => ({ ring }),
+    // Each vault key's scope once, after the cursor, as GROUP BY returns them.
+    spaceKey: {
+      groupBy: async ({ where, take }: { where: { spaceId: { gt: string } }; take: number }) =>
+        [...new Set(keys.map((key) => key.spaceId))]
+          .filter((spaceId) => /^(user|vault):/.test(spaceId) && spaceId > where.spaceId.gt)
+          .sort()
+          .slice(0, take)
+          .map((spaceId) => ({ spaceId })),
+    },
+  });
   const reports: string[] = [];
-  const migrate = (mode: "encrypt" | "decrypt" = "encrypt", dryRun = false) =>
-    migrateVaultValues(db.prisma, secretStore, context, {
-      mode,
-      dryRun,
-      report: (row, status) => reports.push(`${row.id} ${status}`),
-    });
-  return { ...db, keys, provider, ring, migrate, reports };
+  const reasons = new Map<string, string | undefined>();
+  const migrate = (
+    mode: "encrypt" | "reencrypt" | "decrypt" = "encrypt",
+    dryRun = false,
+    signal = context.signal,
+  ) =>
+    migrateVaultValues(
+      db.prisma,
+      secretStore,
+      { ...context, signal },
+      {
+        mode,
+        dryRun,
+        report: (row, status, reason) => {
+          reports.push(`${row.id} ${status}`);
+          if (status === "failed") reasons.set(row.id, reason);
+        },
+      },
+    );
+  return { ...db, keys, deleteOwner, provider, ring, migrate, reports, reasons };
 }
 
 type Db = ReturnType<typeof encryptedDatabase>;
@@ -448,6 +484,38 @@ describe("moving vault values to the envelope keys", () => {
     expect(db.reports).toEqual(
       expect.arrayContaining([`${site.id} failed`, `${row(db, "visa").id} failed`]),
     );
+    expect(db.reasons.get(row(db, "visa").id)).toBe(
+      "read: ContentDecryptionError: Vault item names another vault's key",
+    );
+  });
+
+  it("says why each item failed, without its value or any key", async () => {
+    const db = await mixedVault();
+    const site = row(db, "site");
+    const keyMaterial = randomBytes(32).toString("hex");
+    // Errors from a store or a key manager can quote what they were given.
+    const load = secretStore.load.bind(secretStore);
+    vi.spyOn(secretStore, "load").mockImplementation(async (ref, record) =>
+      (typeof record === "string" ? record : record.recordId) === site.id
+        ? Promise.reject(new Error(`cannot read fake-password-1 from ${ref}`))
+        : load(ref, record),
+    );
+    vi.spyOn(db.provider, "wrap").mockRejectedValueOnce(
+      Object.assign(new Error(`key manager refused ${keyMaterial}`), { code: "KeyUnavailable" }),
+    );
+    try {
+      expect(await db.migrate()).toMatchObject({ migrated: 0, failed: 3 });
+    } finally {
+      vi.mocked(secretStore.load).mockRestore();
+    }
+    expect(Object.fromEntries(db.reasons)).toEqual({
+      [site.id]: "read: Error",
+      [row(db, "visa").id]: "write: Error (KeyUnavailable)",
+      [row(db, "broken").id]: "read: Error",
+    });
+    const reported = JSON.stringify([...db.reasons]);
+    for (const secret of ["fake-password-1", site.ciphertext, keyMaterial])
+      expect(reported).not.toContain(secret);
   });
 
   it("rewrites old rows once, keeps their dates, and leaves a failed row as it was", async () => {
@@ -616,5 +684,263 @@ describe("moving vault values to the envelope keys", () => {
       await expect(secretStore.load(stored.ciphertext, stored.id)).resolves.toBeTruthy();
     }
     expect(await db.migrate("decrypt")).toMatchObject({ migrated: 0 });
+  });
+
+  /** Migrated items, then a new version of their vault's key. */
+  async function rotatedVault() {
+    const db = await mixedVault();
+    await db.migrate();
+    const [first] = db.keys;
+    expect(await rotateVaultKeys(db.prisma)).toEqual({ rotated: 1, ownerGone: 0, failed: 0 });
+    const newest = db.keys.at(-1)!;
+    expect(newest).toMatchObject({ spaceId: first!.spaceId, version: 2 });
+    const keyOf = (name: string) => ciphertextKeyId(row(db, name).ciphertext);
+    return { db, old: first!.id, newest: newest.id, keyOf };
+  }
+
+  it("moves vault items to a new key version, reading both until each has moved", async () => {
+    const { db, old, newest, keyOf } = await rotatedVault();
+    // Saves use the new version at once; items not moved yet still open under the old one.
+    await save(db, { ...login, name: "later" } as BotSecretDestination, loginValue("fake-later"));
+    expect([keyOf("site"), keyOf("visa"), keyOf("later")]).toEqual([old, old, newest]);
+    expect(await fillPassword(db)).toMatchObject({ text: "fake-password-1" });
+
+    const before = structuredClone(db.rows());
+    expect(await db.migrate("reencrypt", true)).toMatchObject({ planned: 2, migrated: 0 });
+    expect(db.rows()).toEqual(before);
+    expect(await db.migrate("reencrypt")).toMatchObject({
+      migrated: 2,
+      verified: 2,
+      // The damaged item in the previous format waits for migrate, unread.
+      notMigrated: 1,
+      failed: 0,
+    });
+    expect([keyOf("site"), keyOf("visa"), keyOf("later")]).toEqual([newest, newest, newest]);
+    expect(row(db, "site").updatedAt).toEqual(before.find((r) => r.name === "site")!.updatedAt);
+    expect(await fillPassword(db)).toMatchObject({ text: "fake-password-1" });
+    expect(await reveal(db, "later")).toMatchObject({ fields: [{}, { value: "fake-later" }] });
+    // The old version stays, for backups taken before the rotation.
+    expect(db.keys.map((key) => key.version)).toEqual([1, 2]);
+    expect(await db.migrate("reencrypt")).toMatchObject({ migrated: 0, verified: 4 });
+  });
+
+  it("lets a save made during the rewrite win", async () => {
+    const { db, newest, keyOf } = await rotatedVault();
+    between(db, () => save(db, login, loginValue("fake-password-2")));
+    expect(await db.migrate("reencrypt")).toMatchObject({ migrated: 1, concurrent: 1 });
+    expect(await fillPassword(db)).toMatchObject({ text: "fake-password-2" });
+    expect(await db.migrate("reencrypt")).toMatchObject({ migrated: 0, concurrent: 0 });
+    expect([keyOf("site"), keyOf("visa")]).toEqual([newest, newest]);
+  });
+
+  it("finishes the rewrite when run again after an interruption", async () => {
+    const { db, old, newest, keyOf } = await rotatedVault();
+    const stop = new AbortController();
+    const interrupted = migrateVaultValues(
+      db.prisma,
+      secretStore,
+      { ...context, signal: stop.signal },
+      { mode: "reencrypt", report: (_, status) => status === "migrated" && stop.abort() },
+    );
+    await expect(interrupted).rejects.toThrow();
+    // One item moved, the other not yet: both still open.
+    expect([keyOf("site"), keyOf("visa")].sort()).toEqual([newest, old].sort());
+    expect(await fillPassword(db)).toMatchObject({ text: "fake-password-1" });
+    await expect(reveal(db, "visa")).resolves.toBeTruthy();
+    expect(await db.migrate("reencrypt")).toMatchObject({ migrated: 1, notMigrated: 1, failed: 0 });
+    expect([keyOf("site"), keyOf("visa")]).toEqual([newest, newest]);
+  });
+
+  /** Three vault keys, listed in this order, and what rotating them reported. */
+  async function threeVaults() {
+    const db = encryptedDatabase();
+    for (const scope of ["user:user-1", "user:user-2", "vault:space-1"])
+      await db.ring.current(scope);
+    const reports: string[] = [];
+    const rotate = () =>
+      rotateVaultKeys(db.prisma, {
+        report: (scope, status, reason) => reports.push(`${scope} ${status} (${reason})`),
+      });
+    const versions = () => db.keys.map((key) => `${key.spaceId} ${key.version}`).sort();
+    return { db, reports, rotate, versions };
+  }
+
+  it("keeps rotating vault keys past a member deleted after they were listed", async () => {
+    const { db, reports, rotate, versions } = await threeVaults();
+    const ringRotate = db.ring.rotate.bind(db.ring);
+    vi.spyOn(db.ring, "rotate").mockImplementationOnce(async (scope) => {
+      db.deleteOwner(scope);
+      return ringRotate(scope);
+    });
+    expect(await rotate()).toEqual({ rotated: 2, ownerGone: 1, failed: 0 });
+    expect(reports).toEqual(["user:user-1 owner gone (undefined)"]);
+    expect(versions()).toEqual([
+      "user:user-2 1",
+      "user:user-2 2",
+      "vault:space-1 1",
+      "vault:space-1 2",
+    ]);
+  });
+
+  it("reports a vault key that cannot rotate, without key material, and rotates the rest", async () => {
+    const { db, reports, rotate, versions } = await threeVaults();
+    const keyMaterial = randomBytes(32).toString("hex");
+    vi.spyOn(db.provider, "wrap").mockRejectedValueOnce(
+      new Error(`key manager refused ${keyMaterial}`),
+    );
+    expect(await rotate()).toEqual({ rotated: 2, ownerGone: 0, failed: 1 });
+    expect(reports).toEqual(["user:user-1 failed (rotate: Error)"]);
+    expect(versions()).toEqual([
+      "user:user-1 1",
+      "user:user-2 1",
+      "user:user-2 2",
+      "vault:space-1 1",
+      "vault:space-1 2",
+    ]);
+  });
+
+  it("counts items deleted with their member during migrate as changed, not failed", async () => {
+    const db = await mixedVault();
+    const broken = row(db, "broken").id;
+    between(db, async () => {
+      db.deleteOwner("user:user-1");
+      await db.prisma.vaultCredential.deleteMany({ where: { userId: "user-1" } });
+    });
+    // Only the damaged item, which fails before it needs a key, is reported as failed.
+    expect(await db.migrate()).toMatchObject({ migrated: 0, concurrent: 2, failed: 1 });
+    expect([...db.reasons.keys()]).toEqual([broken]);
+    expect(db.keys).toEqual([]);
+  });
+
+  it.each(["reencrypt", "rotate --reencrypt"])(
+    "leaves items in the previous format to migrate on %s, creating no vault key",
+    async (command) => {
+      const db = encryptedDatabase();
+      await save(db, login, loginValue());
+      await db.migrate();
+      const keyed = row(db, "site").ciphertext;
+      // One beside the keyed item in the member's vault, one in a Space vault that has no key.
+      for (const [name, spaceId] of [
+        ["old-account", null],
+        ["old-space", "space-1"],
+      ] as const) {
+        const { ciphertext } = await secretStore.put(loginValue(), context, { recordId: name });
+        db.rows().push({ ...row(db, "site"), id: name, name, spaceId, ciphertext });
+      }
+      const before = structuredClone(db.rows());
+      if (command === "rotate --reencrypt")
+        expect(await rotateVaultKeys(db.prisma)).toEqual({ rotated: 1, ownerGone: 0, failed: 0 });
+      expect(await db.migrate("reencrypt")).toMatchObject({
+        notMigrated: 2,
+        migrated: command === "reencrypt" ? 0 : 1,
+        failed: 0,
+      });
+      expect([row(db, "old-account"), row(db, "old-space")]).toEqual(before.slice(1));
+      expect(db.keys.map((key) => key.spaceId)).toEqual(
+        command === "reencrypt" ? ["user:user-1"] : ["user:user-1", "user:user-1"],
+      );
+      expect(row(db, "site").ciphertext === keyed).toBe(command === "reencrypt");
+    },
+  );
+
+  it("does what each command must to each kind of item", async () => {
+    const modes = ["migrate", "decrypt", "reencrypt", "rotate"] as const;
+    type Mode = (typeof modes)[number];
+    const vault = "user:user-1";
+    const toCurrentKey = (db: Db) => db.migrate();
+    const states: Record<string, (db: Db) => Promise<unknown>> = {
+      "old format": async () => {},
+      "current key": toCurrentKey,
+      "older key": async (db) => {
+        await toCurrentKey(db);
+        await db.ring.rotate(vault);
+      },
+      infisical: async (db) => {
+        row(db, "site").ciphertext = "infisical:v1:remote-ref";
+      },
+      unreadable: async (db) => {
+        await toCurrentKey(db);
+        row(db, "site").ciphertext = `${row(db, "site").ciphertext.slice(0, -4)}AAAA`;
+      },
+    };
+    // A deletion or a save races the item each command rewrites.
+    const rewrites: Record<Mode, string> = {
+      migrate: "old format",
+      decrypt: "current key",
+      reencrypt: "older key",
+      rotate: "current key",
+    };
+    const races: Record<string, (db: Db) => Promise<unknown>> = {
+      "owner deleted mid-run": async (db) => {
+        db.deleteOwner(vault);
+        await db.prisma.vaultCredential.deleteMany({ where: { userId: "user-1" } });
+      },
+      "saved concurrently": (db) => save(db, login, loginValue("fake-password-2")),
+    };
+
+    const outcome = async (mode: Mode, state: string) => {
+      const db = encryptedDatabase();
+      await save(db, login, loginValue());
+      await states[races[state] ? rewrites[mode] : state]!(db);
+      if (races[state]) between(db, () => races[state]!(db));
+      const { id, ciphertext } = row(db, "site");
+      const hadKey = db.keys.some((key) => key.spaceId === vault);
+      if (mode === "rotate") await rotateVaultKeys(db.prisma);
+      const counts = await db.migrate(
+        mode === "migrate" ? "encrypt" : mode === "rotate" ? "reencrypt" : mode,
+      );
+      const status = Object.entries(counts).find(([, count]) => count === 1)?.[0];
+      const after = db.rows().find((stored) => stored.id === id);
+      let stored = "unchanged";
+      if (!after) stored = "deleted";
+      else if (after.ciphertext !== ciphertext) {
+        const keyId = ciphertextKeyId(after.ciphertext);
+        const newest = db.keys.filter((key) => key.spaceId === vault).at(-1)?.id;
+        stored = !keyId ? "old format" : keyId === newest ? "newest key" : "older key";
+        if ((await openVaultValue(db.prisma, secretStore, after)) !== loginValue())
+          stored += ", the save";
+      }
+      const firstKey = !hadKey && db.keys.some((key) => key.spaceId === vault);
+      return `${status}: ${stored}${firstKey ? ", first key created" : ""}`;
+    };
+
+    const table: Record<string, Record<Mode, string>> = {};
+    for (const state of [...Object.keys(states), ...Object.keys(races)]) {
+      const cells = {} as Record<Mode, string>;
+      for (const mode of modes) cells[mode] = await outcome(mode, state);
+      table[state] = cells;
+    }
+
+    const all = (cell: string) => ({ migrate: cell, decrypt: cell, reencrypt: cell, rotate: cell });
+    expect(table).toEqual({
+      "old format": {
+        migrate: "migrated: newest key, first key created",
+        decrypt: "verified: unchanged",
+        reencrypt: "notMigrated: unchanged",
+        rotate: "notMigrated: unchanged",
+      },
+      "current key": {
+        migrate: "verified: unchanged",
+        decrypt: "migrated: old format",
+        reencrypt: "verified: unchanged",
+        rotate: "migrated: newest key",
+      },
+      "older key": {
+        migrate: "verified: unchanged",
+        decrypt: "migrated: old format",
+        reencrypt: "migrated: newest key",
+        rotate: "migrated: newest key",
+      },
+      infisical: all("verified: unchanged"),
+      unreadable: all("failed: unchanged"),
+      "owner deleted mid-run": all("concurrent: deleted"),
+      "saved concurrently": {
+        // Migrate still creates the vault's key; its next run moves the item.
+        migrate: "concurrent: old format, the save, first key created",
+        decrypt: "concurrent: newest key, the save",
+        reencrypt: "concurrent: newest key, the save",
+        rotate: "concurrent: newest key, the save",
+      },
+    });
   });
 });

@@ -6,6 +6,7 @@ import {
   contentEncryptionOf,
   decryptText,
   encryptText,
+  VaultKeyOwnerGoneError,
 } from "@rakazo/db";
 import { INFISICAL_REF_PREFIX } from "./infisical-secret-store.js";
 
@@ -85,27 +86,50 @@ export async function openSealedVaultValue(
 }
 
 /**
+ * Why an item could not be moved: the step that failed and the error's kind. Only a decryption
+ * error's message is kept, since its text is fixed; other errors, from a secret store, a key
+ * manager or the database, can quote the value or key material they were given.
+ */
+function failureReason(step: string, error: unknown) {
+  if (error instanceof ContentDecryptionError) return `${step}: ${error.name}: ${error.message}`;
+  const name = error instanceof Error && /^\w{1,64}$/.test(error.name) ? error.name : "Error";
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" && /^[\w.-]{1,40}$/.test(code)
+    ? `${step}: ${name} (${code})`
+    : `${step}: ${name}`;
+}
+
+/**
  * `encrypt` moves values the secret store wrote into the envelope format, creating each vault's
- * key, after which new saves in that vault use it too; `decrypt` writes them back, before rolling
- * back to a release that cannot read it. Each row is a compare-and-set on its
+ * key, after which new saves in that vault use it too; `reencrypt` moves only items under an
+ * older version of their vault's key to its newest, creating no key; `decrypt` writes them
+ * back, before rolling back to a release that cannot read it. Each row is a compare-and-set on its
  * value and date, so a concurrent save wins; a row that cannot be read or verified stays as it
- * was and is reported, as is an item already under a vault key that does not open. Values in an
- * external store stay there. Safe to interrupt and rerun.
+ * was and is reported with the reason, as is an item already under a vault key that does not
+ * open. Values in an external store stay there. Safe to interrupt and rerun.
  */
 export async function migrateVaultValues(
   prisma: PrismaClient,
   store: SecretStore,
   context: AdapterContext,
   options: {
-    mode: "encrypt" | "decrypt";
+    mode: "encrypt" | "reencrypt" | "decrypt";
     dryRun?: boolean;
     report?: (
       row: { id: string },
       status: "planned" | "migrated" | "concurrent" | "failed",
+      reason?: string,
     ) => void;
   },
 ) {
-  const counts = { migrated: 0, verified: 0, planned: 0, concurrent: 0, failed: 0 };
+  const counts = {
+    migrated: 0,
+    verified: 0,
+    planned: 0,
+    concurrent: 0,
+    failed: 0,
+    notMigrated: 0,
+  };
   let cursor = "";
   while (true) {
     context.signal.throwIfAborted();
@@ -118,28 +142,37 @@ export async function migrateVaultValues(
     if (!batch.length) break;
     cursor = batch.at(-1)!.id;
     for (const row of batch) {
-      const sealed = ciphertextKeyId(row.ciphertext) !== undefined;
+      // Each item may wait on the key manager, so an interruption stops before the next one.
+      context.signal.throwIfAborted();
+      const keyId = ciphertextKeyId(row.ciphertext);
       if (
         row.ciphertext.startsWith(INFISICAL_REF_PREFIX) ||
-        (!sealed && options.mode === "decrypt")
+        (!keyId && options.mode === "decrypt")
       ) {
         counts.verified++;
         continue;
       }
-      if (sealed && options.mode === "encrypt") {
-        // Already under its vault's key: read, never rewritten, so an unreadable item is reported.
-        try {
-          await openSealedVaultValue(prisma, row);
-          counts.verified++;
-        } catch {
-          context.signal.throwIfAborted();
-          counts.failed++;
-          options.report?.(row, "failed");
-        }
+      // Re-encryption moves only items already under a vault key. One in the previous format
+      // stays as it is, readable by the previous release, until `migrate`, which alone creates a
+      // vault's first key.
+      if (!keyId && options.mode === "reencrypt") {
+        counts.notMigrated++;
         continue;
       }
+      let step = "read";
       let status: "migrated" | "concurrent" | "failed";
       try {
+        const newest =
+          options.mode === "reencrypt"
+            ? (await ringOf(prisma).all(keyScope(row))).at(-1)
+            : undefined;
+        if (keyId && (options.mode === "encrypt" || keyId === newest?.id)) {
+          // Already under its vault's key (its newest, to re-encrypt): read, never rewritten, so
+          // an unreadable item is reported.
+          await openSealedVaultValue(prisma, row);
+          counts.verified++;
+          continue;
+        }
         const plaintext = await openVaultValue(prisma, store, row, context.signal);
         // A preview reads each value but creates no key and writes nothing.
         if (options.dryRun) {
@@ -147,25 +180,87 @@ export async function migrateVaultValues(
           options.report?.(row, "planned");
           continue;
         }
-        const next =
-          options.mode === "encrypt"
-            ? await seal(prisma, row, plaintext)
-            : (await store.put(plaintext, context, { recordId: row.id })).ciphertext;
+        step = "write";
+        let next: string;
+        if (options.mode === "decrypt")
+          next = (await store.put(plaintext, context, { recordId: row.id })).ciphertext;
+        else if (options.mode === "encrypt") next = await seal(prisma, row, plaintext);
+        // Its vault's keys were deleted with its member or Space after the item was read.
+        else if (!newest) throw new VaultKeyOwnerGoneError();
+        else next = encryptText(newest, location(row), plaintext);
+        step = "check";
         if ((await openVaultValue(prisma, store, { ...row, ciphertext: next })) !== plaintext)
-          throw new Error("Rewritten vault value did not round-trip");
+          throw new ContentDecryptionError("Rewritten vault value did not round-trip");
+        step = "save";
         const { count } = await prisma.vaultCredential.updateMany({
           where: { id: row.id, ciphertext: row.ciphertext, updatedAt: row.updatedAt },
           data: { ciphertext: next, updatedAt: row.updatedAt },
         });
         status = count === 1 ? "migrated" : "concurrent";
-      } catch {
+      } catch (error) {
         context.signal.throwIfAborted();
-        status = "failed";
+        // Its member or Space was deleted meanwhile, and the item with it.
+        if (error instanceof VaultKeyOwnerGoneError) status = "concurrent";
+        else {
+          counts.failed++;
+          options.report?.(row, "failed", failureReason(step, error));
+          continue;
+        }
       }
       counts[status]++;
       options.report?.(row, status);
     }
     if (batch.length < 200) break;
+  }
+  return counts;
+}
+
+/**
+ * Adds a new version to every vault key, members' and Spaces' own alike, for
+ * `rotate --reencrypt`; `reencrypt` then moves items to it. Older versions keep opening.
+ * A key whose member or Space was deleted meanwhile has nothing left to protect and is skipped;
+ * a key that fails to rotate is reported, and the rest still rotate.
+ */
+export async function rotateVaultKeys(
+  prisma: PrismaClient,
+  options: {
+    signal?: AbortSignal;
+    report?: (scope: string, status: "owner gone" | "failed", reason?: string) => void;
+  } = {},
+) {
+  const ring = ringOf(prisma);
+  const counts = { rotated: 0, ownerGone: 0, failed: 0 };
+  let cursor = "";
+  while (true) {
+    options.signal?.throwIfAborted();
+    const scopes = await prisma.spaceKey.groupBy({
+      by: ["spaceId"],
+      where: {
+        spaceId: { gt: cursor },
+        OR: [{ spaceId: { startsWith: "user:" } }, { spaceId: { startsWith: "vault:" } }],
+      },
+      orderBy: { spaceId: "asc" },
+      take: 200,
+    });
+    if (!scopes.length) break;
+    cursor = scopes.at(-1)!.spaceId;
+    for (const { spaceId } of scopes) {
+      options.signal?.throwIfAborted();
+      try {
+        await ring.rotate(spaceId);
+        counts.rotated++;
+      } catch (error) {
+        options.signal?.throwIfAborted();
+        if (error instanceof VaultKeyOwnerGoneError) {
+          counts.ownerGone++;
+          options.report?.(spaceId, "owner gone");
+        } else {
+          counts.failed++;
+          options.report?.(spaceId, "failed", failureReason("rotate", error));
+        }
+      }
+    }
+    if (scopes.length < 200) break;
   }
   return counts;
 }

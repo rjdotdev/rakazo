@@ -15,7 +15,7 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { resolveLoginFill, revealBotSecret, storeBotSecret } from "./bot-secrets.js";
 import { EncryptedSecretStore } from "./secrets.js";
-import { migrateVaultValues } from "./vault-values.js";
+import { migrateVaultValues, rotateVaultKeys } from "./vault-values.js";
 
 const url = process.env.DATABASE_URL;
 const describePostgres = process.env.VERIFY_DATABASE === "1" && url ? describe : describe.skip;
@@ -231,12 +231,13 @@ describePostgres("vault values under the content keys (PostgreSQL)", () => {
       const reports = new Map<string, string>();
       let migration: Promise<unknown> | undefined;
       // Holds the save inside its transaction, after it read the item and before it writes,
-      // while migrate runs: until migrate is done or waiting on a lock the save holds.
+      // while migrate runs: until migrate is done or waiting on a lock the save holds, such as
+      // the member's, which creating the member's vault key waits on from its own connection.
       const blocked = async () => {
         for (let tries = 0; tries < 500; tries++) {
           const { rows } = await sealing.pool.query<{ n: number }>(
             `SELECT count(*)::int AS n FROM pg_stat_activity
-             WHERE application_name = $1 AND wait_event_type = 'Lock'`,
+             WHERE application_name IN ($1, $1 || '-keys') AND wait_event_type = 'Lock'`,
             [applicationName],
           );
           if (rows[0]!.n > 0) return;
@@ -277,6 +278,206 @@ describePostgres("vault values under the content keys (PostgreSQL)", () => {
       await system.user.deleteMany({ where: { id: race.userId } });
       await migrating.prisma.$disconnect();
       await migrating.pool.end();
+    }
+  });
+
+  it("gives vault keys a new version and moves items under it", async () => {
+    const rotateAddress = `vault-rotate-${randomUUID()}@rakazo.test`;
+    const member = await runAsSystem("vault rotation fixture", () =>
+      provisionMessagingIdentity(
+        sealing.prisma,
+        { provider: "email", address: rotateAddress },
+        { signupsEnabled: undefined, signupAllowlist: undefined },
+      ),
+    );
+    try {
+      await runAsTenant(member, () =>
+        storeBotSecret({
+          prisma: sealing.prisma,
+          secretStore,
+          scope: member,
+          destination: { ...login, name: "site" } as BotSecretDestination,
+          plaintext: value("fake-rotated-password"),
+        }),
+      );
+      const reports = new Map<string, string>();
+      const migrate = (mode: "encrypt" | "reencrypt") =>
+        runAsSystem("vault values migration", () =>
+          migrateVaultValues(sealing.prisma, secretStore, context, {
+            mode,
+            report: (row, status) => reports.set(row.id, status),
+          }),
+        );
+      const item = async () =>
+        (await system.vaultCredential.findMany({ where: { userId: member.userId } }))[0]!;
+      const versions = () =>
+        system.spaceKey.findMany({
+          where: { spaceId: `user:${member.userId}` },
+          orderBy: { version: "asc" },
+        });
+      await migrate("encrypt");
+      const before = await item();
+      const [first] = await versions();
+      expect(before.ciphertext).toContain(first!.id);
+
+      expect(
+        await runAsSystem("vault key rotation", () => rotateVaultKeys(sealing.prisma)),
+      ).toMatchObject({ rotated: expect.any(Number), ownerGone: 0, failed: 0 });
+      const [, second] = await versions();
+      expect(second).toMatchObject({ version: 2 });
+      await migrate("reencrypt");
+      expect(reports.get(before.id)).toBe("migrated");
+      expect(await item()).toMatchObject({
+        ciphertext: expect.stringContaining(second!.id),
+        updatedAt: before.updatedAt,
+      });
+      expect(
+        await runAsTenant(member, () =>
+          revealBotSecret({ prisma: sealing.prisma, secretStore, scope: member, name: "site" }),
+        ),
+      ).toMatchObject({ fields: [{ value: "fake-rotated-password" }] });
+    } finally {
+      await system.messagingIdentity.deleteMany({ where: { address: rotateAddress } });
+      await system.organization.deleteMany({ where: { id: member.spaceId } });
+      await system.user.deleteMany({ where: { id: member.userId } });
+    }
+  });
+
+  it("leaves items in the previous format to migrate when re-encrypting, creating no vault key", async () => {
+    const oldAddress = `vault-old-format-${randomUUID()}@rakazo.test`;
+    const member = await runAsSystem("vault old format fixture", () =>
+      provisionMessagingIdentity(
+        sealing.prisma,
+        { provider: "email", address: oldAddress },
+        { signupsEnabled: undefined, signupAllowlist: undefined },
+      ),
+    );
+    try {
+      await runAsTenant(member, () =>
+        storeBotSecret({
+          prisma: sealing.prisma,
+          secretStore,
+          scope: member,
+          destination: { ...login, name: "site" } as BotSecretDestination,
+          plaintext: value("fake-keyed-password"),
+        }),
+      );
+      const migrate = (mode: "encrypt" | "reencrypt") =>
+        runAsSystem("vault values migration", () =>
+          migrateVaultValues(sealing.prisma, secretStore, context, { mode }),
+        );
+      await migrate("encrypt");
+      // In the previous format: one beside the keyed item, one in the Space vault, which has no key.
+      for (const [name, spaceId] of [
+        ["old-account", null],
+        ["old-space", member.spaceId],
+      ] as const) {
+        const id = randomUUID();
+        const { ciphertext } = await secretStore.put(value("fake-old-password"), context, {
+          recordId: id,
+        });
+        await system.vaultCredential.create({
+          data: {
+            id,
+            userId: member.userId,
+            spaceId,
+            name,
+            origin: login.origin,
+            auth: login.auth,
+            ciphertext,
+          },
+        });
+      }
+      const oldItems = () =>
+        system.vaultCredential.findMany({
+          where: { userId: member.userId, name: { startsWith: "old-" } },
+          orderBy: { name: "asc" },
+        });
+      const spaceVaultKeys = () =>
+        system.spaceKey.count({ where: { spaceId: `vault:${member.spaceId}` } });
+      const before = await oldItems();
+      expect(before).toHaveLength(2);
+
+      const reencrypt = async () => {
+        const counts = await migrate("reencrypt");
+        expect(await spaceVaultKeys()).toBe(0);
+        expect(await oldItems()).toEqual(before);
+        expect(counts.notMigrated).toBeGreaterThanOrEqual(2);
+      };
+      await reencrypt();
+      // rotate --reencrypt
+      await runAsSystem("vault key rotation", () => rotateVaultKeys(sealing.prisma));
+      await reencrypt();
+    } finally {
+      await system.messagingIdentity.deleteMany({ where: { address: oldAddress } });
+      await system.organization.deleteMany({ where: { id: member.spaceId } });
+      await system.user.deleteMany({ where: { id: member.userId } });
+    }
+  });
+
+  it("keeps rotating vault keys past a member deleted after they were listed", async () => {
+    const addresses = [0, 1].map(() => `vault-rotate-gone-${randomUUID()}@rakazo.test`);
+    const [doomed, kept] = await runAsSystem("vault rotation fixture", () =>
+      Promise.all(
+        addresses.map((address) =>
+          provisionMessagingIdentity(
+            sealing.prisma,
+            { provider: "email", address },
+            { signupsEnabled: undefined, signupAllowlist: undefined },
+          ),
+        ),
+      ),
+    );
+    const remove = async () => {
+      await system.messagingIdentity.deleteMany({ where: { address: { in: addresses } } });
+      await system.organization.deleteMany({
+        where: { id: { in: [doomed!.spaceId, kept!.spaceId] } },
+      });
+      await system.user.deleteMany({ where: { id: { in: [doomed!.userId, kept!.userId] } } });
+    };
+    try {
+      const ring = contentEncryptionOf(sealing.prisma)!.ring;
+      const [gone, stays] = [`user:${doomed!.userId}`, `user:${kept!.userId}`];
+      await runAsSystem("vault rotation fixture", () =>
+        Promise.all([ring.current(gone), ring.current(stays)]),
+      );
+      // The member is deleted once the keys are listed, before theirs is rotated.
+      let deleted = false;
+      const listing = new Proxy(sealing.prisma, {
+        get(target, key) {
+          const value = Reflect.get(target, key);
+          if (key !== "spaceKey") return typeof value === "function" ? value.bind(target) : value;
+          return {
+            groupBy: async (args: Parameters<typeof target.spaceKey.groupBy>[0]) => {
+              const scopes = await Reflect.apply(target.spaceKey.groupBy, target.spaceKey, [args]);
+              if (!deleted) {
+                deleted = true;
+                await system.messagingIdentity.deleteMany({ where: { address: addresses[0] } });
+                await system.organization.deleteMany({ where: { id: doomed!.spaceId } });
+                await system.user.deleteMany({ where: { id: doomed!.userId } });
+              }
+              return scopes;
+            },
+          };
+        },
+      });
+      const reports: string[] = [];
+      const counts = await runAsSystem("vault key rotation", () =>
+        rotateVaultKeys(listing, { report: (scope, status) => reports.push(`${scope} ${status}`) }),
+      );
+      expect(counts).toMatchObject({ ownerGone: 1, failed: 0 });
+      expect(reports).toEqual([`${gone} owner gone`]);
+      const versions = await system.spaceKey.findMany({
+        where: { spaceId: { in: [gone, stays] } },
+        orderBy: { version: "asc" },
+        select: { spaceId: true, version: true },
+      });
+      expect(versions).toEqual([
+        { spaceId: stays, version: 1 },
+        { spaceId: stays, version: 2 },
+      ]);
+    } finally {
+      await remove();
     }
   });
 

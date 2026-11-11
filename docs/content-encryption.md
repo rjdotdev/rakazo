@@ -168,8 +168,11 @@ Does not protect against:
    pre-v2 format (no record binding) to the current format, and moves vault
    items to the keys above, each with a compare-and-set, keeping its value
    until the new one is written and checked; an item it cannot read is left
-   as it was and reported as failed. `--dry-run` reads every item but creates
-   no key. Run it where `DATA_DIR` is mounted so artifacts are encrypted too.
+   as it was and reported as failed, with the step that failed and the kind of
+   error (never its value or a key). `--dry-run` reads every item but creates
+   no key. A vault key is created only while its member or Space exists, so a
+   deletion during `migrate` leaves no key behind. Run it where `DATA_DIR` is
+   mounted so artifacts are encrypted too.
 
    The `vault_credentials` line of `status` counts every vault item not yet
    under a vault key, apart from items in Infisical. The count does not always
@@ -213,11 +216,20 @@ Rotate the master key:
 
 Rotate data keys too (for example after suspected key exposure):
 `content-encryption rotate --reencrypt` adds a new key version to every space
-and re-encrypts messages, events, memory, summaries and artifacts under it.
-Vault items keep the key version they were written with, and vault keys
-(members' and Spaces' own) get no new version; `rotate` still re-wraps them.
-Running processes may keep writing with the previous version for up to ten
-minutes, so run `content-encryption reencrypt` again after that.
+and every vault key (members' and Spaces' own), and re-encrypts messages,
+events, memory, summaries, artifacts and vault items under it. Only vault items
+already under a vault key move, the way `migrate` moves them: a save made
+meanwhile wins, the item keeps its date, and an item that does not open stays as
+it was and is reported with the reason. Items still in the `ENCRYPTION_KEY`
+format are left as they are and counted as `not under a vault key (run
+migrate)`; neither command creates a vault's first key. A vault key whose member or Space is deleted during the run is
+skipped and counted as `owner gone`. A vault key that cannot get a new version
+is reported with the reason; the other keys still rotate, items still move, and
+the command exits with an error at the end. Older versions keep decrypting
+until nothing uses them. Running
+processes may keep writing with the previous version for up to ten minutes, and
+an interrupted run leaves some items under the old version, so run
+`content-encryption reencrypt` again after that; it rotates no keys.
 
 ## External key management
 
