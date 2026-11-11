@@ -88,6 +88,7 @@ beforeEach(() => {
     endLine: 2,
     totalLines: 2,
     partial: false,
+    contentHash: "a".repeat(64),
   }));
   vi.mocked(rpc.computer.saveFile).mockImplementation(async (input: { path: string }) => ({
     ok: true as const,
@@ -154,6 +155,7 @@ it("browses the bot home and shared, then edits a file from this chat", async ()
       botId: "bot-1",
       path: "notes/weekly.md",
       content: "Saved from chat.",
+      expectedContentHash: "a".repeat(64),
     }),
   );
 });
@@ -184,7 +186,15 @@ it("pages a file that does not fit and keeps the editor closed", async () => {
   vi.mocked(rpc.computer.changedFiles).mockResolvedValue([]);
   vi.mocked(rpc.computer.readFile).mockImplementation(async (input: { offset?: number }) =>
     input.offset && input.offset > 1
-      ? { path: "big.log", content: "", startLine: 2, endLine: 1, totalLines: null, partial: true }
+      ? {
+          path: "big.log",
+          content: "",
+          startLine: 2,
+          endLine: 1,
+          totalLines: null,
+          partial: true,
+          contentHash: null,
+        }
       : {
           path: "big.log",
           content: "start",
@@ -192,6 +202,7 @@ it("pages a file that does not fit and keeps the editor closed", async () => {
           endLine: 1,
           totalLines: null,
           partial: true,
+          contentHash: null,
         },
   );
   await render();

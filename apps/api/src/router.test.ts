@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -4393,8 +4394,15 @@ describe("computer terminal and file transfer", () => {
     home?: LocalAgentHomeStore,
   ) {
     const sandbox = {
-      execute: vi.fn(async function* () {
-        yield { type: "exit" as const, code: 0 };
+      execute: vi.fn(async function* (
+        _computer?: unknown,
+        _request?: { argv?: string[] },
+      ): AsyncGenerator<
+        | { type: "stdout"; data: string }
+        | { type: "stderr"; data: string }
+        | { type: "exit"; code: number }
+      > {
+        yield { type: "exit", code: 0 };
       }),
       listFiles: vi.fn().mockResolvedValue([]),
       connectTerminal: vi.fn().mockResolvedValue({
@@ -4667,6 +4675,7 @@ describe("computer terminal and file transfer", () => {
           endLine: 1,
           totalLines: 1,
           partial: false,
+          contentHash: createHash("sha256").update("hello").digest("hex"),
         },
       },
     });
@@ -4687,6 +4696,7 @@ describe("computer terminal and file transfer", () => {
           endLine: 2,
           totalLines: 3,
           partial: false,
+          contentHash: null,
         },
       },
     });
@@ -4737,15 +4747,44 @@ describe("computer terminal and file transfer", () => {
 
   it("saves text without computer control and lists what this chat wrote", async () => {
     const running = setup();
+    running.sandbox.execute.mockImplementation(async function* (
+      _computer?: unknown,
+      request?: { argv?: string[] },
+    ) {
+      if (request?.argv?.[3] === "rakazo-stage") {
+        yield { type: "stdout" as const, data: "/tmp/rakazo-save.test" };
+      }
+      yield { type: "exit" as const, code: 0 };
+    });
     await expect(
       running.call("saveFile", { path: "notes/weekly.md", content: "hello" }),
     ).resolves.toMatchObject({
       status: 200,
       body: { json: { ok: true, path: "notes/weekly.md" } },
     });
-    expect(running.sandbox.writeFile).toHaveBeenCalledWith(
+    expect(running.sandbox.writeFile).not.toHaveBeenCalled();
+    expect(running.sandbox.execute).toHaveBeenCalledWith(
       expect.objectContaining({ id: "sandbox-ref-1" }),
-      { path: "bots/bot-1/notes/weekly.md", content: new TextEncoder().encode("hello") },
+      expect.objectContaining({
+        argv: [
+          "bash",
+          "-c",
+          expect.any(String),
+          "rakazo-stage",
+          Buffer.from("hello").toString("base64"),
+        ],
+      }),
+      expect.anything(),
+    );
+    expect(running.sandbox.execute).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        argv: expect.arrayContaining([
+          "rakazo-commit",
+          "/tmp/rakazo-save.test",
+          "bots/bot-1/notes/weekly.md",
+        ]),
+      }),
       expect.anything(),
     );
     expect(running.events.append).toHaveBeenCalledWith(
@@ -4759,6 +4798,7 @@ describe("computer terminal and file transfer", () => {
     await expect(
       running.call("saveFile", { path: "notes/weekly.md", content: "again" }),
     ).resolves.toMatchObject({ status: 200 });
+    expect(running.events.append).toHaveBeenCalledTimes(3);
 
     await expect(
       running.call("saveFile", { path: "bots/bot-2/secret.txt", content: "no" }),
@@ -4842,6 +4882,170 @@ describe("computer terminal and file transfer", () => {
     await expect(history.call("changedFiles", {})).resolves.toEqual({
       status: 200,
       body: { json: [{ path: "notes/weekly.md", at: "2026-01-02T00:00:00.000Z" }] },
+    });
+  });
+
+  it("refuses a live save that would follow a symlink out of this bot", async () => {
+    const running = setup();
+    running.sandbox.execute.mockImplementation(async function* (
+      _computer?: unknown,
+      request?: { argv?: string[] },
+    ) {
+      if (request?.argv?.[3] === "rakazo-stage") {
+        yield { type: "stdout" as const, data: "/tmp/rakazo-save.test" };
+      }
+      if (request?.argv?.[3] === "rakazo-commit") {
+        yield { type: "exit" as const, code: 2 };
+        return;
+      }
+      yield { type: "exit" as const, code: 0 };
+    });
+    await expect(
+      running.call("saveFile", { path: "notes.txt", content: "pwned" }),
+    ).resolves.toMatchObject({
+      status: 400,
+      body: { json: { message: "Path escapes the bot workspace" } },
+    });
+    expect(running.sandbox.writeFile).not.toHaveBeenCalled();
+    expect(running.events.append).not.toHaveBeenCalled();
+  });
+
+  it("does not read a live file whose real path leaves this bot", async () => {
+    const running = setup();
+    running.sandbox.execute.mockImplementation(async function* (
+      _computer?: unknown,
+      request?: { argv?: string[] },
+    ) {
+      if (request?.argv?.[3] === "rakazo-contain") {
+        yield { type: "exit" as const, code: 2 };
+        return;
+      }
+      yield { type: "exit" as const, code: 0 };
+    });
+    await expect(running.call("readFile", { path: "notes.txt" })).resolves.toMatchObject({
+      status: 400,
+      body: { json: { message: "Path escapes the bot workspace" } },
+    });
+    expect(running.sandbox.readFile).not.toHaveBeenCalled();
+  });
+
+  it("refuses a save while the computer is starting or stopping", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rakazo-computer-busy-"));
+    try {
+      for (const state of ["booting", "suspending"] as const) {
+        const busy = setup(
+          { state, providerRef: "sandbox-ref-1" },
+          undefined,
+          new LocalAgentHomeStore(root),
+        );
+        await expect(
+          busy.call("saveFile", { path: "notes.txt", content: "later" }),
+        ).resolves.toMatchObject({
+          status: 409,
+          body: { json: { message: "The computer is busy. Try again." } },
+        });
+        expect(busy.sandbox.writeFile).not.toHaveBeenCalled();
+      }
+      await expect(
+        readFile(path.join(root, "homes", "home-1", "bots", "bot-1", "notes.txt"), "utf8"),
+      ).rejects.toThrow();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a save when the file changed since it was opened", async () => {
+    const running = setup();
+    await expect(
+      running.call("saveFile", {
+        path: "notes.txt",
+        content: "newer",
+        expectedContentHash: "0".repeat(64),
+      }),
+    ).resolves.toMatchObject({
+      status: 409,
+      body: { json: { message: "This file changed. Open it again." } },
+    });
+    expect(running.sandbox.writeFile).not.toHaveBeenCalled();
+    expect(running.sandbox.execute).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ argv: expect.arrayContaining(["rakazo-commit"]) }),
+      expect.anything(),
+    );
+  });
+
+  it("opens a file named shared on a private computer", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rakazo-computer-dedicated-"));
+    try {
+      const dedicated = setup(
+        { scope: "dedicated", state: "stopped", providerRef: null },
+        undefined,
+        new LocalAgentHomeStore(root),
+      );
+      await expect(
+        dedicated.call("saveFile", { path: "shared", content: "hello" }),
+      ).resolves.toMatchObject({ status: 200 });
+      await expect(dedicated.call("readFile", { path: "shared" })).resolves.toMatchObject({
+        status: 200,
+        body: {
+          json: {
+            content: "hello",
+            contentHash: createHash("sha256").update("hello").digest("hex"),
+          },
+        },
+      });
+      await expect(
+        dedicated.call("saveFile", { path: "bots/notes.md", content: "note" }),
+      ).resolves.toMatchObject({ status: 200 });
+      await expect(dedicated.call("readFile", { path: "bots/notes.md" })).resolves.toMatchObject({
+        status: 200,
+        body: { json: { content: "note" } },
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps an older chat write when newer commands fill the first page", async () => {
+    const history = setup();
+    const filler = Array.from({ length: 200 }, (_, index) => ({
+      id: `dup-${index}`,
+      createdAt: new Date("2026-01-03T00:00:00.000Z"),
+      payload: {
+        executionId: `dup-${index}`,
+        kind: "write_file",
+        command: "notes/weekly.md",
+        cwd: ".",
+        status: "done",
+        exitCode: 0,
+        output: "",
+      },
+    }));
+    (history.prisma.event.findMany as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(filler)
+      .mockResolvedValueOnce([
+        {
+          id: "older",
+          createdAt: new Date("2026-01-01T00:00:00.000Z"),
+          payload: {
+            executionId: "older",
+            kind: "write_file",
+            command: "src/app.ts",
+            cwd: ".",
+            status: "done",
+            exitCode: 0,
+            output: "",
+          },
+        },
+      ]);
+    await expect(history.call("changedFiles", {})).resolves.toEqual({
+      status: 200,
+      body: {
+        json: [
+          { path: "notes/weekly.md", at: "2026-01-03T00:00:00.000Z" },
+          { path: "src/app.ts", at: "2026-01-01T00:00:00.000Z" },
+        ],
+      },
     });
   });
 

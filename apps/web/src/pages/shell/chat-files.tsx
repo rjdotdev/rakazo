@@ -1,4 +1,5 @@
 import { Trans, useLingui } from "@lingui/react/macro";
+import { ORPCError } from "@orpc/client";
 import { ChatMarkdown } from "@rakazo/chat-ui/web";
 import type { ComputerMode } from "@rakazo/contracts";
 import { CHAT_FILE_READ_MAX_LINES } from "@rakazo/contracts";
@@ -194,9 +195,10 @@ function FileView({ botId, path, onBack }: { botId: string; path: string; onBack
   const [offset, setOffset] = useState(1);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
+  const [baseline, setBaseline] = useState<string | null>(null);
   const [editNote, setEditNote] = useState<"large" | "failed" | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saveFailed, setSaveFailed] = useState(false);
+  const [saveNote, setSaveNote] = useState<"busy" | "changed" | "failed" | null>(null);
   const text = useQuery({
     ...queries.computer.readFile.queryOptions({
       input: { botId, path, offset, limit: PREVIEW_LINES },
@@ -214,7 +216,7 @@ function FileView({ botId, path, onBack }: { botId: string; path: string; onBack
   );
 
   async function startEdit() {
-    setSaveFailed(false);
+    setSaveNote(null);
     setEditNote(null);
     try {
       const loaded = await rpc.computer.readFile({
@@ -223,10 +225,15 @@ function FileView({ botId, path, onBack }: { botId: string; path: string; onBack
         offset: 1,
         limit: CHAT_FILE_READ_MAX_LINES,
       });
-      if (loaded.partial || loaded.endLine < (loaded.totalLines ?? loaded.endLine)) {
+      if (
+        loaded.partial ||
+        loaded.contentHash === null ||
+        loaded.endLine < (loaded.totalLines ?? loaded.endLine)
+      ) {
         setEditNote("large");
         return;
       }
+      setBaseline(loaded.contentHash);
       setDraft(loaded.content);
       setEditing(true);
     } catch {
@@ -236,9 +243,14 @@ function FileView({ botId, path, onBack }: { botId: string; path: string; onBack
 
   async function save() {
     setSaving(true);
-    setSaveFailed(false);
+    setSaveNote(null);
     try {
-      await rpc.computer.saveFile({ botId, path, content: draft });
+      await rpc.computer.saveFile({
+        botId,
+        path,
+        content: draft,
+        ...(baseline ? { expectedContentHash: baseline } : {}),
+      });
       setEditing(false);
       setOffset(1);
       await Promise.all([
@@ -246,8 +258,14 @@ function FileView({ botId, path, onBack }: { botId: string; path: string; onBack
         queryClient.invalidateQueries({ queryKey: queries.computer.readFile.key() }),
         queryClient.invalidateQueries({ queryKey: queries.computer.changedFiles.key() }),
       ]);
-    } catch {
-      setSaveFailed(true);
+    } catch (error) {
+      if (error instanceof ORPCError && error.code === "CONFLICT") {
+        if (error.message === "This file changed. Open it again.") setSaveNote("changed");
+        else if (error.message === "The computer is busy. Try again.") setSaveNote("busy");
+        else setSaveNote("failed");
+      } else {
+        setSaveNote("failed");
+      }
     } finally {
       setSaving(false);
     }
@@ -277,7 +295,17 @@ function FileView({ botId, path, onBack }: { botId: string; path: string; onBack
           </Button>
         ) : null}
       </div>
-      {saveFailed ? (
+      {saveNote === "changed" ? (
+        <p className="text-body text-destructive">
+          <Trans>This file changed. Open it again.</Trans>
+        </p>
+      ) : null}
+      {saveNote === "busy" ? (
+        <p className="text-body text-destructive">
+          <Trans>The computer is busy. Try again.</Trans>
+        </p>
+      ) : null}
+      {saveNote === "failed" ? (
         <p className="text-body text-destructive">
           <Trans>Couldn't save.</Trans>
         </p>

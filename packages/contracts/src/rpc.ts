@@ -866,6 +866,8 @@ export const appContract = {
           /** Null when the file is larger than the read cap, so the line count is incomplete. */
           totalLines: z.number().int().nullable(),
           partial: z.boolean(),
+          /** Set when this response is the whole file, so a save can tell if it changed. */
+          contentHash: z.string().nullable(),
         }),
       ),
     /** Text save that does not require computer control. Confined to this bot and shared/. */
@@ -875,6 +877,11 @@ export const appContract = {
           botId: Id,
           path: z.string().min(1),
           content: z.string().max(CHAT_FILE_TEXT_BYTES),
+          /** Hash from a full read. A different file now is refused. */
+          expectedContentHash: z
+            .string()
+            .regex(/^[a-f0-9]{64}$/)
+            .optional(),
         }),
       )
       .output(z.object({ ok: z.literal(true), path: z.string() })),
