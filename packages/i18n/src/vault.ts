@@ -1,6 +1,6 @@
 import { i18n } from "@lingui/core";
 import type { VaultSaveDrop } from "@rakazo/core";
-import { secretAnswerRefusal, vaultSaveDrops } from "@rakazo/core";
+import { secretAnswerRefusal, vaultImportProblemList, vaultSaveDrops } from "@rakazo/core";
 
 /**
  * Vault text both apps show, kept here so the copy and its choice can't drift between them. Static
@@ -97,4 +97,26 @@ export function vaultImportText() {
       }),
     },
   };
+}
+
+/** An import review's left-out rows, one line each by row and site, never by username. */
+export function vaultImportProblemLines(
+  problems: Parameters<typeof vaultImportProblemList>[0],
+): string[] {
+  const { reasons } = vaultImportText();
+  const { shown, more } = vaultImportProblemList(problems);
+  return [
+    ...shown.map(({ line, label, reason }) =>
+      [
+        i18n._({ id: "Row {line}", message: "Row {line}", values: { line } }),
+        label,
+        reasons[reason],
+      ]
+        .filter(Boolean)
+        .join(" · "),
+    ),
+    ...(more > 0
+      ? [i18n._({ id: "And {more} more", message: "And {more} more", values: { more } })]
+      : []),
+  ];
 }

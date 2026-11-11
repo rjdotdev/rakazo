@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { i18n } from "@lingui/core";
 import type { ReactNode } from "react";
 import { act, createElement, useEffect, useState } from "react";
 import type { Root } from "react-dom/client";
@@ -1075,6 +1076,30 @@ it("reviews a picked CSV export, imports only new logins and reminds to delete t
   );
   expect(state.alert.mock.lastCall?.[1]).toBe(
     `Added: 1\nAlready saved: 1\nNot on an HTTPS site: 1\n\n${left}\n\nDelete the exported file now. It holds your passwords unencrypted.`,
+  );
+});
+
+it("lists left-out rows with the wording and limit both apps share", async () => {
+  // A locale no catalog ships, so only these two strings change.
+  i18n.load("en-XA", { "Row {line}": "Zeile {line}", "And {more} more": "Und {more} weitere" });
+  i18n.activate("en-XA");
+  state.pickCsv.mockResolvedValue({
+    rows: [],
+    lines: [],
+    skipped: { notHttps: 7, noPassword: 0, duplicate: 0, invalid: 0, limit: 0 },
+    problems: Array.from({ length: 7 }, (_, index) => ({
+      line: index + 1,
+      label: `Old ${index}`,
+      reason: "notHttps",
+    })),
+  });
+  await render();
+  await act(async () => button("Import CSV", menu("New item"))!.click());
+  expect(state.alert.mock.lastCall?.[1]).toContain(
+    [
+      ...[0, 1, 2, 3, 4].map((index) => `Zeile ${index + 1} · Old ${index} · Not on an HTTPS site`),
+      "Und 2 weitere",
+    ].join("\n"),
   );
 });
 

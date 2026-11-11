@@ -19,7 +19,7 @@ import {
   vaultImportProblems,
   vaultKind,
 } from "@rakazo/contracts";
-import { vaultImportText, vaultSaveNotice } from "@rakazo/i18n/vault";
+import { vaultImportProblemLines, vaultImportText, vaultSaveNotice } from "@rakazo/i18n/vault";
 import * as Clipboard from "expo-clipboard";
 import type { NativeStackNavigationOptions } from "expo-router";
 import { useFocusEffect, useLocalSearchParams, useNavigation } from "expo-router";
@@ -62,7 +62,6 @@ import { pickVaultCsv } from "../../lib/vault-import";
 type RowAction = "edit" | "remove";
 const IMPORT = "import";
 const IMPORT_TIMEOUT_MS = 120_000;
-const IMPORT_PROBLEMS_SHOWN = 5;
 type Editing = { kind: VaultKind; item?: VaultItem; revealed?: VaultRevealed };
 
 /**
@@ -249,22 +248,16 @@ export default function Vault() {
     const { skipped } = csv;
     const { problems: fileProblems } = csv;
     const plan = newVaultImportRows(csv.rows, items ?? [], csv.lines);
-    const { labels, reasons } = vaultImportText();
+    const { labels } = vaultImportText();
     // A short list of the rows left out: the counts already say how many.
     const lines = (result?: VaultImportResult) => {
-      const problems = vaultImportProblems(fileProblems, plan, result);
-      const more = problems.length - IMPORT_PROBLEMS_SHOWN;
+      const problems = vaultImportProblemLines(vaultImportProblems(fileProblems, plan, result));
       return [
         ...vaultImportCounts(skipped, plan, result).map(
           ([kind, count]) => `${labels[kind]}: ${count}`,
         ),
         ...(problems.length ? [""] : []),
-        ...problems
-          .slice(0, IMPORT_PROBLEMS_SHOWN)
-          .map(({ line, label, reason }) =>
-            [t`Row ${line}`, label, reasons[reason]].filter(Boolean).join(" · "),
-          ),
-        ...(more > 0 ? [t`And ${more} more`] : []),
+        ...problems,
       ].join("\n");
     };
     async function save() {

@@ -1401,6 +1401,29 @@ describe("VaultSettings item details", () => {
     expect(find("vault-import-page")).toBeNull();
   });
 
+  it("lists left-out rows with the wording and limit both apps share", async () => {
+    // A locale no catalog ships, so only these two strings change.
+    i18n.load("en-XA", { "Row {line}": "Zeile {line}", "And {more} more": "Und {more} weitere" });
+    i18n.activate("en-XA");
+    await render();
+    const csv = [
+      "name,url,username,password",
+      ...Array.from({ length: 7 }, (_, index) => `Old ${index},http://old.example.com,a,x`),
+    ].join("\n");
+    const input = byTestId<HTMLInputElement>("vault-import-file");
+    Object.defineProperty(input, "files", { value: [new File([csv], "export.csv")] });
+    await act(async () => {
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await flush();
+    expect(
+      [...find("vault-import-problems")!.querySelectorAll("li")].map((row) => row.textContent),
+    ).toEqual([
+      ...[0, 1, 2, 3, 4].map((index) => `Zeile ${index + 1} · Old ${index} · Not on an HTTPS site`),
+      "Und 2 weitere",
+    ]);
+  });
+
   it("imports the file picked last, whichever read finishes first", async () => {
     for (const order of [
       ["a", "b"],

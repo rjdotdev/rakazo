@@ -1,4 +1,4 @@
-import type { BotSecretMetadata, VaultPolicy } from "@rakazo/contracts";
+import type { BotSecretMetadata, VaultImportProblem, VaultPolicy } from "@rakazo/contracts";
 import { BLOCKED_ITEM_ANSWER, hasAuthenticatorKey, UNCHOSEN_ITEM_ANSWER } from "@rakazo/contracts";
 
 /**
@@ -28,12 +28,27 @@ export function vaultSaveDrops(
   saved: Partial<Pick<BotSecretMetadata, "policy" | "allBots" | "alsoOn" | "preview">>,
 ): VaultSaveDrop[] {
   const drops: VaultSaveDrop[] = [];
+  // Allow is what a server without policies does anyway, so only Ask first and Block can be lost.
   if (sent.policy === "ask" && saved.policy !== "ask") drops.push("ask");
-  else if (sent.policy && saved.policy === undefined) drops.push("block");
-  else if (sent.allBots === false && saved.allBots === undefined) drops.push("bots");
+  else if (sent.policy === "off" && saved.policy === undefined) drops.push("block");
+  if (sent.allBots === false && saved.allBots === undefined) drops.push("bots");
   if (sent.alsoOn && saved.alsoOn === undefined) drops.push("alsoOn");
   // A preview that couldn't be read says nothing of the key.
   if (hasAuthenticatorKey(sent.value) && saved.preview && !saved.preview.otp)
     drops.push("authenticatorKey");
   return drops;
+}
+
+// A short list: the counts already say how many, and a long export would bury the review.
+const IMPORT_PROBLEMS_SHOWN = 5;
+
+/** The left-out rows an import review lists, and how many more it only counts. */
+export function vaultImportProblemList(problems: readonly VaultImportProblem[]): {
+  shown: VaultImportProblem[];
+  more: number;
+} {
+  return {
+    shown: problems.slice(0, IMPORT_PROBLEMS_SHOWN),
+    more: Math.max(0, problems.length - IMPORT_PROBLEMS_SHOWN),
+  };
 }

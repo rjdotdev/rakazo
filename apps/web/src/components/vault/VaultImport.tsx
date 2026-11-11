@@ -6,13 +6,10 @@ import type {
   VaultImportRow,
 } from "@rakazo/contracts";
 import { newVaultImportRows, vaultImportCounts, vaultImportProblems } from "@rakazo/contracts";
-import { vaultImportText } from "@rakazo/i18n/vault";
+import { vaultImportProblemLines, vaultImportText } from "@rakazo/i18n/vault";
 import { Button } from "@rakazo/ui-web";
 import { useState } from "react";
 import { VaultPageHeader } from "./VaultPageHeader";
-
-// A short list: the counts already say how many, and a long export would bury the page.
-const PROBLEMS_SHOWN = 5;
 
 /** The review of a CSV export read on this device, then what the import saved. */
 export function VaultImportPage({
@@ -36,10 +33,11 @@ export function VaultImportPage({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<VaultImportResult>();
-  const { labels, reasons, fileProblems } = vaultImportText();
+  const { labels, fileProblems } = vaultImportText();
 
-  const problems = "rows" in csv && plan ? vaultImportProblems(csv.problems, plan, result) : [];
-  const more = problems.length - PROBLEMS_SHOWN;
+  const problems = vaultImportProblemLines(
+    "rows" in csv && plan ? vaultImportProblems(csv.problems, plan, result) : [],
+  );
 
   async function save() {
     if (!plan) return;
@@ -80,12 +78,9 @@ export function VaultImportPage({
           data-testid="vault-import-problems"
           className="space-y-1 text-body-sm text-muted-foreground"
         >
-          {problems.slice(0, PROBLEMS_SHOWN).map(({ line, label, reason }) => (
-            <li key={line}>
-              {[t`Row ${line}`, label, reasons[reason]].filter(Boolean).join(" · ")}
-            </li>
+          {problems.map((problem) => (
+            <li key={problem}>{problem}</li>
           ))}
-          {more > 0 ? <li>{t`And ${more} more`}</li> : null}
         </ul>
       ) : null}
       {result ? (

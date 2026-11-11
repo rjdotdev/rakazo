@@ -1,6 +1,11 @@
 import { i18n } from "@lingui/core";
 import { afterEach, expect, it } from "vitest";
-import { secretAnswerErrorText, vaultImportText, vaultSaveNotice } from "./vault";
+import {
+  secretAnswerErrorText,
+  vaultImportProblemLines,
+  vaultImportText,
+  vaultSaveNotice,
+} from "./vault";
 
 // The server's fixed refusals, as the contracts send them.
 const BLOCKED = "This item is blocked for bots. Allow it in the Vault, or dismiss the request.";
@@ -53,11 +58,32 @@ it("names import results and unusable files", () => {
   });
 });
 
+it("lists an import's left-out rows the same way in both apps", () => {
+  i18n.activate("en");
+  const rows = Array.from({ length: 7 }, (_, index) => ({
+    line: index + 2,
+    label: index === 0 ? "" : `site-${index}.example.test`,
+    reason: index % 2 ? ("duplicate" as const) : ("noPassword" as const),
+  }));
+  expect(vaultImportProblemLines(rows)).toEqual([
+    "Row 2 · No password",
+    "Row 3 · site-1.example.test · Already saved",
+    "Row 4 · site-2.example.test · No password",
+    "Row 5 · site-3.example.test · Already saved",
+    "Row 6 · site-4.example.test · No password",
+    "And 2 more",
+  ]);
+  expect(vaultImportProblemLines(rows.slice(0, 1))).toEqual(["Row 2 · No password"]);
+  expect(vaultImportProblemLines([])).toEqual([]);
+});
+
 it("uses the active catalog", () => {
   i18n.load("de", {
     [BLOCKED]: "Dieser Eintrag ist für Bots gesperrt.",
     "Vault full": "Tresor voll",
     "Saved, but this server can't ask you first.": "Gespeichert, aber ohne Nachfrage.",
+    "Row {line}": "Zeile {line}",
+    "And {more} more": "Und {more} weitere",
   });
   i18n.activate("de");
   expect(secretAnswerErrorText(new Error(BLOCKED), "x")).toBe(
@@ -66,5 +92,11 @@ it("uses the active catalog", () => {
   expect(vaultImportText().labels.full).toBe("Tresor voll");
   expect(vaultSaveNotice({ policy: "ask" }, { policy: "allow" })).toBe(
     "Gespeichert, aber ohne Nachfrage.",
+  );
+  const row = { label: "Old", reason: "limit" as const };
+  expect(
+    vaultImportProblemLines(Array.from({ length: 6 }, (_, index) => ({ ...row, line: index + 1 }))),
+  ).toEqual(
+    [1, 2, 3, 4, 5].map((line) => `Zeile ${line} · Old · Tresor voll`).concat("Und 1 weitere"),
   );
 });
