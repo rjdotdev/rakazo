@@ -884,7 +884,14 @@ export const appContract = {
             .optional(),
         }),
       )
-      .output(z.object({ ok: z.literal(true), path: z.string() })),
+      .output(
+        z.object({
+          ok: z.literal(true),
+          path: z.string(),
+          /** False when the file was saved but this chat's changed list did not record it. */
+          tracked: z.boolean(),
+        }),
+      ),
     /** Files this bot wrote in its own chat, newest first. */
     changedFiles: oc.input(botId).output(z.array(z.object({ path: z.string(), at: z.string() }))),
     downloadFile: oc

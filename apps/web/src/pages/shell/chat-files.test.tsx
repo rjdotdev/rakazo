@@ -93,6 +93,7 @@ beforeEach(() => {
   vi.mocked(rpc.computer.saveFile).mockImplementation(async (input: { path: string }) => ({
     ok: true as const,
     path: input.path,
+    tracked: true,
   }));
   container = document.createElement("div");
   document.body.append(container);
@@ -158,6 +159,37 @@ it("browses the bot home and shared, then edits a file from this chat", async ()
       expectedContentHash: "a".repeat(64),
     }),
   );
+  expect(container.textContent).not.toContain("Saved. It is not on the changed list yet.");
+});
+
+it("says a saved file is missing from the changed list when tracking fails", async () => {
+  vi.mocked(rpc.computer.files).mockResolvedValue([{ path: "notes.txt", kind: "file", size: 5 }]);
+  vi.mocked(rpc.computer.changedFiles).mockResolvedValue([]);
+  vi.mocked(rpc.computer.saveFile).mockResolvedValue({
+    ok: true,
+    path: "notes.txt",
+    tracked: false,
+  });
+  await render();
+  await vi.waitFor(() => expect(container.querySelector('[data-path="notes.txt"]')).not.toBeNull());
+  await act(async () => button("notes.txt").click());
+  await vi.waitFor(() => expect(container.textContent).toContain("hello"));
+  const edit = [...container.querySelectorAll("button")].find(
+    (node) => node.textContent === "Edit",
+  );
+  await act(async () => edit?.click());
+  const save = await vi.waitFor(() => {
+    const node = [...container.querySelectorAll("button")].find(
+      (item) => item.textContent === "Save",
+    );
+    if (!node) throw new Error("waiting for save");
+    return node;
+  });
+  await act(async () => save.click());
+  await vi.waitFor(() =>
+    expect(container.textContent).toContain("Saved. It is not on the changed list yet."),
+  );
+  expect(container.textContent).not.toContain("Couldn't save.");
 });
 
 it("leaves a private computer without a shared folder", async () => {

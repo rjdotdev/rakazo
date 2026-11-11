@@ -4760,7 +4760,7 @@ describe("computer terminal and file transfer", () => {
       running.call("saveFile", { path: "notes/weekly.md", content: "hello" }),
     ).resolves.toMatchObject({
       status: 200,
-      body: { json: { ok: true, path: "notes/weekly.md" } },
+      body: { json: { ok: true, path: "notes/weekly.md", tracked: true } },
     });
     expect(running.sandbox.writeFile).not.toHaveBeenCalled();
     expect(running.sandbox.execute).toHaveBeenCalledWith(
@@ -4797,7 +4797,10 @@ describe("computer terminal and file transfer", () => {
     running.events.append.mockRejectedValueOnce(new Error("event store unavailable"));
     await expect(
       running.call("saveFile", { path: "notes/weekly.md", content: "again" }),
-    ).resolves.toMatchObject({ status: 200 });
+    ).resolves.toMatchObject({
+      status: 200,
+      body: { json: { ok: true, tracked: true } },
+    });
     expect(running.events.append).toHaveBeenCalledTimes(3);
 
     await expect(
@@ -5000,6 +5003,34 @@ describe("computer terminal and file transfer", () => {
       await expect(dedicated.call("readFile", { path: "bots/notes.md" })).resolves.toMatchObject({
         status: 200,
         body: { json: { content: "note" } },
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a saved file when the changed list cannot record it", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "rakazo-computer-untracked-"));
+    try {
+      const stopped = setup(
+        { state: "stopped", providerRef: null },
+        undefined,
+        new LocalAgentHomeStore(root),
+      );
+      stopped.events.append.mockRejectedValue(new Error("event store unavailable"));
+      await expect(
+        stopped.call("saveFile", { path: "notes.txt", content: "saved" }),
+      ).resolves.toMatchObject({
+        status: 200,
+        body: { json: { ok: true, path: "notes.txt", tracked: false } },
+      });
+      expect(stopped.events.append).toHaveBeenCalledTimes(2);
+      await expect(
+        readFile(path.join(root, "homes", "home-1", "bots", "bot-1", "notes.txt"), "utf8"),
+      ).resolves.toBe("saved");
+      await expect(stopped.call("changedFiles", {})).resolves.toEqual({
+        status: 200,
+        body: { json: [] },
       });
     } finally {
       await rm(root, { recursive: true, force: true });

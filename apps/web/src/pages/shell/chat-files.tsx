@@ -161,14 +161,15 @@ function FileButton({
 }) {
   const Icon = kind === "dir" ? Folder : File;
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
       data-testid="chat-file"
       data-path={path}
       data-kind={kind}
       aria-expanded={kind === "dir" ? expanded : undefined}
       title={path}
-      className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-body hover:bg-accent"
+      className="h-auto w-full min-w-0 shrink justify-start gap-1.5 rounded-md px-1.5 py-1 text-left font-normal whitespace-normal"
       style={{ paddingInlineStart: 6 + depth * 12 }}
       onClick={onClick}
     >
@@ -176,14 +177,14 @@ function FileButton({
         <ChevronRight
           size={14}
           strokeWidth={1.8}
-          className={`shrink-0 text-muted-foreground ${expanded ? "rotate-90" : ""}`}
+          className={`size-3.5 shrink-0 text-muted-foreground ${expanded ? "rotate-90" : ""}`}
         />
       ) : (
         <span className="size-3.5 shrink-0" />
       )}
-      <Icon size={14} strokeWidth={1.8} className="shrink-0 text-muted-foreground" />
+      <Icon size={14} strokeWidth={1.8} className="size-3.5 shrink-0 text-muted-foreground" />
       <span className="min-w-0 truncate">{showPath ? path : baseName(path)}</span>
-    </button>
+    </Button>
   );
 }
 
@@ -198,7 +199,9 @@ function FileView({ botId, path, onBack }: { botId: string; path: string; onBack
   const [baseline, setBaseline] = useState<string | null>(null);
   const [editNote, setEditNote] = useState<"large" | "failed" | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saveNote, setSaveNote] = useState<"busy" | "changed" | "failed" | null>(null);
+  const [saveNote, setSaveNote] = useState<"busy" | "changed" | "failed" | "untracked" | null>(
+    null,
+  );
   const text = useQuery({
     ...queries.computer.readFile.queryOptions({
       input: { botId, path, offset, limit: PREVIEW_LINES },
@@ -245,7 +248,7 @@ function FileView({ botId, path, onBack }: { botId: string; path: string; onBack
     setSaving(true);
     setSaveNote(null);
     try {
-      await rpc.computer.saveFile({
+      const saved = await rpc.computer.saveFile({
         botId,
         path,
         content: draft,
@@ -253,6 +256,7 @@ function FileView({ botId, path, onBack }: { botId: string; path: string; onBack
       });
       setEditing(false);
       setOffset(1);
+      if (saved.tracked === false) setSaveNote("untracked");
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queries.computer.files.key() }),
         queryClient.invalidateQueries({ queryKey: queries.computer.readFile.key() }),
@@ -308,6 +312,11 @@ function FileView({ botId, path, onBack }: { botId: string; path: string; onBack
       {saveNote === "failed" ? (
         <p className="text-body text-destructive">
           <Trans>Couldn't save.</Trans>
+        </p>
+      ) : null}
+      {saveNote === "untracked" ? (
+        <p className="text-body text-muted-foreground">
+          <Trans>Saved. It is not on the changed list yet.</Trans>
         </p>
       ) : null}
       {imageType ? (

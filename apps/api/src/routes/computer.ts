@@ -823,6 +823,7 @@ export function computerRoutes(ctx: RouterContext) {
           );
           await deps.home.writeFile(computer.homeKey, storedPath, input.content, ctx);
         }
+        let tracked = false;
         if (bot.thread) {
           const event = {
             spaceId: context.actor.spaceId,
@@ -840,13 +841,17 @@ export function computerRoutes(ctx: RouterContext) {
               bytes: content.byteLength,
             },
           };
-          try {
-            await deps.events.append(event);
-          } catch {
-            await deps.events.append(event).catch(() => undefined);
+          // The bytes are already stored. A second miss stays tracked false instead of failing the save.
+          for (let attempt = 0; attempt < 2 && !tracked; attempt++) {
+            try {
+              await deps.events.append(event);
+              tracked = true;
+            } catch {
+              tracked = false;
+            }
           }
         }
-        return { ok: true as const, path: input.path };
+        return { ok: true as const, path: input.path, tracked };
       }),
       changedFiles: authed.computer.changedFiles.handler(async ({ context, input }) => {
         const bot = await repos.getBot(context.actor, input.botId);
