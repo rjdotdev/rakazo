@@ -407,11 +407,19 @@ const CODE_CUE = new RegExp(
     "动态密码",
     "動態密碼",
   ].join("|"),
-  "iu",
+  "giu",
 );
-/** Codes that are not for signing in: postal, promotional, order numbers and barcodes. */
-const NOT_A_CODE_CUE = new RegExp(
+/**
+ * Words that name a number as something other than a sign-in code, in the languages the app
+ * ships: postal, promotional, order, tracking, invoice, reference and booking numbers, barcodes.
+ * A code cue inside one ("promo code", "クーポンコード") is not a cue.
+ */
+const OTHER_NAME = new RegExp(
   [
+    // "In order to" names nothing.
+    word(
+      String.raw`(?:(?<!\bin )orders?|ordered|tracking|shipment|parcel|invoices?|receipts?|references?|ref|booking|reservation|zip|postal|postcode|promo|discount|coupons?|vouchers?|barcode|plz|cep|pedido|factura|fatura|referencia|referência|reserva|cup[óo]n|cupom|descuento|desconto|commande|facture|r[ée]f[ée]rence|colis|r[ée]servation|factuur|referentie|zending|boeking|kupon|rabat|takip|referans|indirim|rezervasyon)(?:[ -]?(?:codes?|numbers?|nos?\.|nos?|nr\.?|ids?|references?|refs?|nummer|numaras[ıi]))?`,
+    ),
     String.raw`(?<![\p{L}\p{N}])(?:zip|postal|post|promo|promotional|discount|coupon|voucher|gift|area|country|order|tracking|invoice|reference|referral|bar|rabatt|gutschein|kortings)[ -]?codes?`,
     "c[óo]d(?:e|igo) (?:postal|promo)",
     "kod (?:pocztowy|rabatowy|promocyjny)",
@@ -420,97 +428,165 @@ const NOT_A_CODE_CUE = new RegExp(
     // Words in these scripts run together, so the compounds that name other codes are listed.
     "(?:バー|QR|クーポン|プロモーション|割引|ギフト)コード",
     "(?:바|QR|쿠폰|할인|프로모션) ?코드",
+    stem(
+      "bestel|auftrag|sendung|rechnung|referenz|postleitzahl|gutschein|buchung|seguimiento|rastreamento|rastreio|zamówieni|faktur|przesyłk|rezerwacj|sipari[şs]|заказ|накладн|трек|купон|скидк|индекс|бронирован|ऑर्डर|ट्रैकिंग|इनवॉइस|चालान|कूपन|संदर्भ",
+    ) + String.raw`[\p{L}\p{M}]*`,
+    `(?<!${NOT_WORD_EDGE})(?:[הבולמכש]|של)?(?:הזמנ[הת]|חשבונית|מיקוד|אסמכתא|משלוח|קופון|הנחה)`,
+    "(?:注文|追跡|問い合わせ|請求|郵便|予約|伝票|クーポン)(?:番号)?",
+    "(?:주문|운송장|송장|우편|쿠폰|예약)(?: ?번호)?",
+    "(?:订单|訂單|运单|運單|快递单|發票|发票|邮编|邮政编码|郵遞區號|优惠|優惠|预订|預訂)[号號]?",
   ].join("|"),
   "giu",
 );
-/**
- * A word right before a number that names it as something else: "Order no. 48213977",
- * "ZIP 94043", "Tracking number: 1234 5678". Tried on the few characters before one number.
- */
-const OTHER_NUMBER =
-  /(?<![\p{L}\p{N}])(?:zip|postal|postcode|promo|discount|coupon|order|tracking|invoice|reference|barcode)(?:[ -]?(?:codes?|numbers?|no|nr|ids?))?[\s:#.-]*$/iu;
-/** How far a cue may be from the number it names, on the same line. */
+/** How far a cue may be from the number it names, on its line or the nearest lines with text. */
 const CODE_CUE_REACH = 40;
 
-const hasCodeCue = (text: string) => CODE_CUE.test(text.replace(NOT_A_CODE_CUE, " "));
+/** Whether a subject names a code and no other number, so it names any number no word names. */
+const namesOnlyACode = (text: string) =>
+  text.search(OTHER_NAME) === -1 && text.search(CODE_CUE) !== -1;
 
 /**
  * The first line with text on it going `step` (-1 up, 1 down) from the line break at `from`
- * (up) or the line starting at `from` (down); "" when there is none.
+ * (up) or the line starting at `from` (down), as the [start, end) of its text.
  */
-function nearestLineWithText(text: string, from: number, step: -1 | 1): string {
+function nearestLineWithText(
+  text: string,
+  from: number,
+  step: -1 | 1,
+): [number, number] | undefined {
   let at = from;
   while (step < 0 ? at > 0 : at < text.length) {
     const start = step < 0 ? text.lastIndexOf("\n", at - 1) + 1 : at;
     const found = text.indexOf("\n", start);
     const end = step < 0 ? at : found === -1 ? text.length : found;
     const line = text.slice(start, end);
-    if (line.trim()) return line;
+    if (line.trim()) {
+      const lead = line.length - line.trimStart().length;
+      return [start + lead, start + lead + line.trim().length];
+    }
     at = step < 0 ? start - 1 : end + 1;
   }
-  return "";
+  return undefined;
 }
 
-/**
- * Whether the number at `start`..`end` of `text` reads as a code: a cue next to it on its line,
- * or, on a line holding nothing else, a cue in the subject or on the nearest line with text above
- * or below it ("Order number" above it makes it no code).
- */
-/**
- * Whether a word right before the number at `start` names it as something other than a code: on
- * its line, or, on a line of its own, at the end of the nearest line with text above it.
- */
-function namedOtherwise(text: string, start: number): boolean {
-  const lineStart = text.lastIndexOf("\n", start - 1) + 1;
-  const before = text.slice(lineStart, start).trim()
-    ? text.slice(lineStart, start)
-    : nearestLineWithText(text, lineStart - 1, -1);
-  return OTHER_NUMBER.test(before.slice(-CODE_CUE_REACH));
-}
+/** What may stand between a number and a word that touches it: spaces, and one ":", "#" or dash. */
+const TOUCHING = /^\s*[:#\p{Pd}]?\s*$/u;
 
-function cuedCode(text: string, start: number, end: number, subjectCued: boolean): boolean {
-  const lineStart = text.lastIndexOf("\n", start - 1) + 1;
-  const lineEnd = text.indexOf("\n", end);
-  const line = text.slice(lineStart, lineEnd === -1 ? text.length : lineEnd);
-  if (line.trim() === text.slice(start, end)) {
-    return (
-      subjectCued ||
-      hasCodeCue(nearestLineWithText(text, lineStart - 1, -1)) ||
-      (lineEnd !== -1 && hasCodeCue(nearestLineWithText(text, lineEnd + 1, 1)))
-    );
+/**
+ * Whether the words nearest the number at `start`..`end` of `text` name it as a code, looking
+ * in `from`..`start` and `end`..`to`. True when the nearest is a sign-in cue; false when it names
+ * the number as something else, or such a word ties with a cue or touches the number; undefined
+ * with neither. A word naming something else that touches the number before or after this one
+ * (`previous` ends, `next` starts) and not this one names that number instead.
+ */
+function nearestWordIsCue(
+  text: string,
+  [from, start, end, to]: [number, number, number, number],
+  [previous, next]: [number, number],
+) {
+  // A little text around the reach, so a word cut at its edge still sees what comes before it.
+  const offset = Math.max(0, from - 8);
+  const near = text.slice(offset, to + 8);
+  const words: { cue: boolean; gap: string }[] = [];
+  const masked = near.replace(OTHER_NAME, (name) => " ".repeat(name.length));
+  for (const [pattern, source, cue] of [
+    [OTHER_NAME, near, false],
+    [CODE_CUE, masked, true],
+  ] as const) {
+    for (const match of source.matchAll(pattern)) {
+      const at = offset + match.index;
+      const after = at + match[0].length;
+      const [gap, beyond] =
+        at >= from && after <= start
+          ? [
+              text.slice(after, start),
+              previous >= 0 && at >= previous ? text.slice(previous, at) : undefined,
+            ]
+          : at >= end && after <= to
+            ? [
+                text.slice(end, at),
+                next < Infinity && after <= next ? text.slice(after, next) : undefined,
+              ]
+            : [];
+      if (gap === undefined) continue;
+      if (!cue && beyond !== undefined && TOUCHING.test(beyond) && !TOUCHING.test(gap)) continue;
+      words.push({ cue, gap });
+    }
   }
-  return hasCodeCue(
-    `${line.slice(Math.max(0, start - lineStart - CODE_CUE_REACH), start - lineStart)} ${line.slice(
-      end - lineStart,
-      end - lineStart + CODE_CUE_REACH,
-    )}`,
+  if (words.some((word) => !word.cue && TOUCHING.test(word.gap))) return false;
+  const nearest = Math.min(...words.map((word) => word.gap.length));
+  const closest = words.filter((word) => word.gap.length === nearest);
+  return closest.length ? closest.every((word) => word.cue) : undefined;
+}
+
+/**
+ * Whether the number at `start`..`end` of `text` reads as a code, by the words nearest it
+ * (nearestWordIsCue): on its line, or, on a line holding nothing else, on the nearest lines with
+ * text above and below it. A word never reaches past another number (`after`..`before`). With no
+ * such word, a number on a line of its own, or `anywhere` in the text, counts when `cued`.
+ */
+function cuedCode(
+  text: string,
+  [start, end]: [number, number],
+  [after, before]: [number, number],
+  cued: boolean,
+  anywhere: boolean,
+): boolean {
+  // Only the spaces next to the number and the reach are read, so a long line costs no more.
+  let lineStart = start;
+  while (lineStart > 0 && /[^\S\n]/.test(text[lineStart - 1] ?? "")) lineStart--;
+  let lineEnd = end;
+  while (lineEnd < text.length && /[^\S\n]/.test(text[lineEnd] ?? "")) lineEnd++;
+  const alone =
+    (lineStart === 0 || text[lineStart - 1] === "\n") &&
+    (lineEnd === text.length || text[lineEnd] === "\n");
+  const back = text.slice(Math.max(0, start - CODE_CUE_REACH), start);
+  const ahead = text.slice(end, end + CODE_CUE_REACH);
+  const breakAhead = ahead.indexOf("\n");
+  const above: [number, number] | undefined = alone
+    ? nearestLineWithText(text, lineStart - 1, -1)
+    : [start - back.length + back.lastIndexOf("\n") + 1, start];
+  const below: [number, number] | undefined = alone
+    ? nearestLineWithText(text, lineEnd + 1, 1)
+    : [end, end + (breakAhead === -1 ? ahead.length : breakAhead)];
+  const from = Math.max(after, above ? Math.max(above[0], above[1] - CODE_CUE_REACH) : start);
+  const to = Math.min(before, below ? Math.min(below[1], below[0] + CODE_CUE_REACH) : end);
+  return (
+    nearestWordIsCue(text, [from, start, end, to], [after, before]) ?? ((alone || anywhere) && cued)
   );
 }
 
 /**
  * The one-time code an email carries, as it would be typed: digit groups joined. A number counts
- * only with a code cue next to it on its line, in a subject that names a code, or on a line of its
- * own with a cue in the subject or on the nearest line with text above or below. Nothing unless
- * the email holds exactly one such code, the same one wherever it appears, so an email that also
- * shows another number by a cue gives none rather than a guess; and nothing unless that code
- * stands alone (oneTimeCodeStandsAlone), as a shorter one could not be hidden.
+ * only when the nearest word naming it is a code cue (cuedCode), or, in the subject or on a line
+ * of its own, when no word names it and the subject names a code. Nothing unless the email holds
+ * exactly one such code, the same one wherever it appears, so an email that also shows another
+ * number by a cue gives none rather than a guess; and nothing unless that code stands alone
+ * (oneTimeCodeStandsAlone), as a shorter one could not be hidden.
  */
 export function extractOneTimeCode(email: { subject: string; text: string }): string | undefined {
   const codes = new Set<string>();
-  // A subject is short: a cue anywhere in it names its number.
-  const subjectCued = hasCodeCue(email.subject);
-  for (const [text, cued] of [
-    [email.subject, subjectCued],
+  const subjectCued = namesOnlyACode(email.subject);
+  for (const [text, inSubject] of [
+    [email.subject, true],
     [email.text, false],
   ] as const) {
-    for (const match of text.matchAll(CODE_PATTERN)) {
+    const matches = [...text.matchAll(CODE_PATTERN)];
+    for (const [index, match] of matches.entries()) {
       const written = match[0];
       const code = normalizeOneTimeCode(written.replace(/[ -]/g, ""));
       if (!code || YEAR.test(code) || !oneTimeCodeWritings(code).includes(written)) continue;
-      if (namedOtherwise(text, match.index)) continue;
-      if (cued || cuedCode(text, match.index, match.index + written.length, subjectCued)) {
-        codes.add(code);
-      }
+      const previous = matches[index - 1];
+      const next = matches[index + 1];
+      const cued = cuedCode(
+        text,
+        [match.index, match.index + written.length],
+        [previous ? previous.index + previous[0].length : -1, next ? next.index : Infinity],
+        subjectCued,
+        // A subject is short: a cue anywhere in it names a number no word names.
+        inSubject,
+      );
+      if (cued) codes.add(code);
     }
   }
   const [code] = codes;

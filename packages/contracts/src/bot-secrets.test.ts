@@ -721,6 +721,107 @@ describe("one-time code contracts", () => {
       expect(read(`${name} number:\n48213977`, "Your sign-in code")).toBeUndefined();
     });
 
+    // A sign-in cue and a word naming the number as something else, in each shipped language.
+    const NAMES: [language: string, cue: string, other: string][] = [
+      ["en", "verification code", "order"],
+      ["de", "Bestätigungscode", "Bestellnummer"],
+      ["es", "código de verificación", "pedido"],
+      ["fr", "code de vérification", "commande"],
+      ["he", "קוד אימות", "הזמנה"],
+      ["hi", "सत्यापन कोड", "ऑर्डर"],
+      ["ja", "認証コード", "注文番号"],
+      ["ko", "인증 코드", "주문번호"],
+      ["nl", "verificatiecode", "bestelnummer"],
+      ["pl", "kod weryfikacyjny", "zamówienie"],
+      ["pt-BR", "código de verificação", "pedido"],
+      ["ru", "код подтверждения", "заказ"],
+      ["tr", "doğrulama kodu", "sipariş"],
+      ["zh-CN", "验证码", "订单号"],
+      ["zh-TW", "驗證碼", "訂單號"],
+    ];
+    const N = "48213977";
+    // Where the number sits and which words are nearest to it: the nearest decides, and a word
+    // naming it otherwise wins a tie or when it touches the number.
+    const PLACES: [place: string, text: (cue: string, other: string) => string, code?: string][] = [
+      ["cue before", (cue) => `${cue} ${N}`, N],
+      ["cue after", (cue) => `${N} ${cue}`, N],
+      ["other name before", (_cue, other) => `${other} ${N}`],
+      ["other name after", (_cue, other) => `${N} ${other}`],
+      ["other name before, cue after", (cue, other) => `${other} ${N} ${cue}`],
+      ["cue before, other name after", (cue, other) => `${cue} ${N} ${other}`],
+      ["cue before, other name further after", (cue, other) => `${cue} ${N} ok ok ${other}`, N],
+      ["other name further before, cue after", (cue, other) => `${other} ok ok ${N} ${cue}`, N],
+      ["cue further before, other name after", (cue, other) => `${cue} ok ok ${N} ${other}`],
+      ["other name after, cue further after", (cue, other) => `${N} ${other} ok ok ${cue}`],
+      ["alone, cue above, other name below", (cue, other) => `${cue}\n${N}\n${other}`],
+      ["alone, other name above, cue below", (cue, other) => `${other}\n${N}\n${cue}`],
+      ["alone, cue above", (cue) => `${cue}\n\n${N}\n\nok`, N],
+      ["alone, cue below", (cue) => `ok\n\n${N}\n\n${cue}`, N],
+    ];
+    it.each(
+      NAMES.flatMap(([language, cue, other]) =>
+        PLACES.map(([place, text, code]) => [language, place, text(cue, other), code] as const),
+      ),
+    )("lets the nearest word decide in %s: %s", (_language, _place, text, code) => {
+      expect(read(text, "Hello")).toBe(code);
+      // The same in the subject.
+      if (!text.includes("\n")) expect(read("Hello", text)).toBe(code);
+    });
+
+    it.each([
+      ["a number named an order before a cue", "Order 48213977 code: 731905", "731905"],
+      ["an order number cued after", "48213977 is your order. Enter the code below", undefined],
+      ["an order number named after it", "48213977 is your order number. Your code: x", undefined],
+      ["an order no.", "Your code is below. Order no. 48213977", undefined],
+      ["a reference", "ref 48213977 - verification pending", undefined],
+      // A word does not reach past another number, and the order word is nearer than the cue, so
+      // the card opens for these two.
+      [
+        "a code after an order number",
+        "Your verification code for order 48213977 is 731905",
+        undefined,
+      ],
+      [
+        "a code after an order number in Spanish",
+        "Tu código de verificación para el pedido 48213977 es 731905",
+        undefined,
+      ],
+      ["in order to", "Enter the code below in order to continue:\n731905", "731905"],
+      [
+        "a booking reference after a code",
+        "Your code is 482913. Booking reference K7Q2M9",
+        "482913",
+      ],
+      ["an order in brackets after a code", "Code 731905 (order 48213977)", "731905"],
+      [
+        "an order sentence after a code",
+        "Your code: 731905. Order 48213977 has shipped.",
+        "731905",
+      ],
+      ["a reference touching the number", "48213977 - ref. Your code: x", undefined],
+      ["an order line above a cued line", "Order 48213977\nYour code:\n731905", "731905"],
+    ])("decides per number: %s", (_name, text, code) => {
+      expect(read(text, "Hello")).toBe(code);
+    });
+
+    it("stays linear on long text full of numbers and naming words", () => {
+      const started = performance.now();
+      // Each number reads only the words within reach, not its whole line.
+      expect(
+        read(`${"x ".repeat(500_000)}${"order 48213977 code ".repeat(4_000)}`),
+      ).toBeUndefined();
+      expect(read(`${"x".repeat(200_000)}\n482913\n${"\n".repeat(50_000)}Your code`)).toBe(
+        "482913",
+      );
+      expect(read("bestell".repeat(30_000))).toBeUndefined();
+      expect(performance.now() - started).toBeLessThan(1_500);
+    });
+
+    it("takes no number on a line of its own by a subject that also names another number", () => {
+      expect(read("Hi,\n\n48213977\n\nThanks", "Your order and sign-in code")).toBeUndefined();
+      expect(read("Hi,\n\n48213977\n\nThanks", "Your sign-in code")).toBe("48213977");
+    });
+
     it("takes a number in the subject only when the subject names a code", () => {
       expect(read("Welcome back.", "Order 482913 confirmed")).toBeUndefined();
       expect(read("Welcome back.", "482913 is your sign-in code")).toBe("482913");
