@@ -38,7 +38,7 @@ import {
   emailedCodeWindowStart,
   notePageForEmailedCode,
   runPageOrigin,
-  takeEmailedCode,
+  runTookEmailedCode,
 } from "./emailed-code.js";
 import { addRunSecrets, pauseForSecret, persistTurnCheckpoint } from "./run-context.js";
 import { recordEffect } from "./run-effects.js";
@@ -206,8 +206,9 @@ export const secretTools: ToolHandlers = {
     let heldCode =
       storedSecret && codeOrigin ? await readRunCode(deps.secretStore, storedSecret) : undefined;
     if (storedSecret && codeOrigin && (!heldCode || applied?.effect.status === "intended")) {
-      // An emailed code stays hidden, as if the page had taken it; its email stays claimed.
-      if (heldCode?.fromEmail)
+      // An emailed code stays hidden, as if the page had taken it; its email stays claimed. One
+      // that cannot be read now may be emailed, so it is kept too, until it can be read and hidden.
+      if (heldCode?.fromEmail || (!heldCode && (await runTookEmailedCode(deps.prisma, runId))))
         await deps.prisma.secret.updateMany({
           where: { id: storedSecret.id, kind: secretKind },
           data: { kind: runCodeSpentKind(runId) },
@@ -232,7 +233,8 @@ export const secretTools: ToolHandlers = {
       (!applied || applied.effect.status === "intended") &&
       (await runPageOrigin(ctx)) === codeOrigin;
     if (pageOnOrigin) {
-      const emailed = await takeEmailedCode(deps.prisma, {
+      const emailed = await holdEmailedCode(deps.prisma, deps.secretStore, {
+        scope: run,
         botId: bot.id,
         spaceId: run.spaceId,
         runId,
@@ -241,13 +243,7 @@ export const secretTools: ToolHandlers = {
         botEmailDomain: deps.inboundEmailDomain,
       });
       if (emailed) {
-        storedSecret = await holdEmailedCode(deps.prisma, deps.secretStore, {
-          scope: run,
-          runId,
-          origin: codeOrigin,
-          code: emailed.code,
-          fromEmail: emailed.emailId,
-        });
+        storedSecret = emailed.stored;
         heldCode = { origin: codeOrigin, code: emailed.code, fromEmail: emailed.emailId };
       }
     }

@@ -666,6 +666,61 @@ describe("one-time code contracts", () => {
       expect(read(`${text}\nYour code is 731905.`)).toBe("731905");
     });
 
+    it.each([
+      ["a codec", "Video codec 482913"],
+      ["decoding", "Decode 482913 to continue."],
+      ["an encoding", "Encoded as 482913."],
+      ["a barcode", "Barcode 48213977"],
+      ["a postcode", "Postcode: 48213977"],
+      ["a zip code", "ZIP code 48213977"],
+      ["a codec in Russian", "Кодек 482913"],
+      ["an encoding in Polish", "Kodowanie 482913"],
+      ["an encoding in Turkish", "Kodlama 482913"],
+      ["a barcode in Hebrew", "ברקוד 48213977"],
+      ["a barcode in Japanese", "バーコード：48213977"],
+      ["a QR code in Japanese", "QRコード 48213977"],
+      ["a barcode in Korean", "바코드 48213977"],
+    ])("takes no number by a word that only contains a code cue: %s", (_name, text) => {
+      expect(read(text)).toBeUndefined();
+    });
+
+    it.each([
+      ["a passcode", "Your passcode: 482913"],
+      ["a code next to Han text", "您的code是482913"],
+      ["a German security code", "Ihr Sicherheitscode: 482913"],
+      ["a German sign-in code", "Dein Anmeldecode lautet 482913."],
+      ["a Dutch sign-in code", "Je inlogcode is 482913."],
+      ["a Russian PIN code", "Ваш пин-код: 482913"],
+      ["a Russian code in another case", "Войдите с кодом 482913"],
+      ["a Polish code in another case", "Zaloguj się kodem 482913"],
+      ["a Hebrew code with its article", "הקוד שלך: 482913"],
+      ["a Japanese confirmation code", "確認コード：482913"],
+      ["a Korean confirmation code", "확인코드: 482913"],
+    ])("still finds %s", (_name, text) => {
+      expect(read(text)).toBe("482913");
+    });
+
+    it.each([
+      "ZIP",
+      "Postal",
+      "Promo",
+      "Discount",
+      "Coupon",
+      "Order",
+      "Tracking",
+      "Invoice",
+      "Reference",
+      "Barcode",
+    ])("does not take a number named as a %s number by a sign-in code", (name) => {
+      expect(read(`${name} 48213977. Your sign-in code is 731905.`)).toBe("731905");
+      expect(read(`${name} no. 48213977, sign-in code 731905`)).toBe("731905");
+      expect(read(`${name} code: 48213977`)).toBeUndefined();
+      const named = name === "Barcode" ? "barcode" : `${name.toLowerCase()} code`;
+      expect(read(`48213977 is your ${named}`)).toBeUndefined();
+      // On a line of its own under the word.
+      expect(read(`${name} number:\n48213977`, "Your sign-in code")).toBeUndefined();
+    });
+
     it("takes a number in the subject only when the subject names a code", () => {
       expect(read("Welcome back.", "Order 482913 confirmed")).toBeUndefined();
       expect(read("Welcome back.", "482913 is your sign-in code")).toBe("482913");
@@ -721,7 +776,7 @@ describe("one-time code contracts", () => {
 
     it("finds nothing when the email holds two different codes", () => {
       expect(read("Your code is 482913. Your previous code 731905 has expired.")).toBeUndefined();
-      expect(read("Order 48213977 is ready. Your code is 731905.")).toBeUndefined();
+      expect(read("Ticket 48213977 is ready. Your code is 731905.")).toBeUndefined();
       expect(read("Your code is 731905.", "Your code is 482913")).toBeUndefined();
     });
   });

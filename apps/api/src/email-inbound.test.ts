@@ -377,6 +377,7 @@ describe("inbound email route", () => {
         answeredByUserId: "user-1",
         answer: "482913",
         fromEmail: "email-1",
+        claimEmail: expect.any(Function),
       });
       expect(enqueue).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({ payload: expect.objectContaining({ runId: "run-7" }) }),

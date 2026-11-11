@@ -36,10 +36,19 @@ function inbox(
     if (page)
       effects.set(`emailed-code:page:request-${id}`, { runId: id, request: { origin: page } });
   }
-  const answerRunInput = vi.fn(async (_input: Row) => {
-    if (options.answered instanceof Error) throw options.answered;
-    return options.answered ?? true;
-  });
+  const answerRunInput = vi.fn(
+    async ({ claimEmail }: { claimEmail?: (tx: unknown) => Promise<void> }) => {
+      if (options.answered === false) return false;
+      // The email is taken in the answer's own transaction, as the database does it.
+      return (prisma.$transaction as (fn: (tx: unknown) => Promise<boolean>) => Promise<boolean>)(
+        async (tx) => {
+          await claimEmail?.(tx);
+          if (options.answered instanceof Error) throw options.answered;
+          return true;
+        },
+      );
+    },
+  );
   const enqueue = vi.fn(async (_job: unknown) => undefined);
   const prisma: Record<string, unknown> = {
     run: {
@@ -167,6 +176,7 @@ describe("a code emailed to the bot while its run waits on the card", () => {
       answeredByUserId: "user-1",
       answer: CODE,
       fromEmail: "email-1",
+      claimEmail: expect.any(Function),
     });
     expect(enqueue).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ payload: expect.objectContaining({ runId: "run-1" }) }),
@@ -220,6 +230,15 @@ describe("a code emailed to the bot while its run waits on the card", () => {
       cards: { "run-1": codeCard(), "run-2": codeCard() },
     });
     await deliver();
+    expect(answerRunInput).not.toHaveBeenCalled();
+  });
+
+  it("answers neither card when one email would answer two, also when one run looks again", async () => {
+    const { deliver, answerRunInput } = inbox({
+      runs: [waitingRun(), waitingRun({ id: "run-2", threadId: "thread-2" })],
+      cards: { "run-1": codeCard(), "run-2": codeCard() },
+    });
+    await deliver("run-2");
     expect(answerRunInput).not.toHaveBeenCalled();
   });
 

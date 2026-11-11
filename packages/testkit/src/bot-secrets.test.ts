@@ -650,6 +650,8 @@ describeIntegration("reusable credential lifecycle", () => {
     const site = "https://login.example.test";
     const code = "73915864";
     const mail = `Your sign-in code is ${code}.`;
+    /** The code as an email may write it apart, which only a code taken from email hides. */
+    const spellings = ["7391 5864", "7 3 9 1 5 8 6 4", "7.3.9.1.5.8.6.4", "7391\u00a05864"];
     const requestCode = {
       name: "request_secret",
       args: { label: "Sign-in code", oneTimeCode: { origin: site } },
@@ -666,12 +668,22 @@ describeIntegration("reusable credential lifecycle", () => {
           name: "browser_act",
           args: { actions: [{ kind: "fill_code", ref: refNamed(results.at(-1)?.result, "Code") }] },
         }),
-        { name: "read_email", args: {} },
+        // Later mail writes the code apart; every email the run reads hides it however written.
+        async () => {
+          await run.deliver("news@example-login.test", `Written apart: ${spellings.join(" / ")}.`);
+          return { name: "read_email", args: {} };
+        },
         async () => ({
           name: "read_email",
           args: {
-            id: (await db.botEmailMessage.findFirstOrThrow({ where: { botId: run.seeded.bot.id } }))
-              .id,
+            id:
+              // The site's email came first.
+              (
+                await db.botEmailMessage.findFirstOrThrow({
+                  where: { botId: run.seeded.bot.id },
+                  orderBy: { receivedAt: "asc" },
+                })
+              ).id,
           },
         }),
         // A run takes one emailed code per site: a new code is the owner's to give.
@@ -715,6 +727,8 @@ describeIntegration("reusable credential lifecycle", () => {
           '"ok":true',
         );
         expect(run.results[5]?.text).toContain("Your sign-in code is [redacted].");
+        expect(run.results[5]?.text).toContain("Written apart: [redacted]");
+        for (const written of spellings) expect(run.results[5]?.text).not.toContain(written);
         expect(run.results[6]?.text).toContain("Your sign-in code is [redacted].");
         expect(run.results[7]?.text).toContain("Waiting for protected input");
         // Typed into the field the snapshot named, and spent there.
@@ -891,7 +905,7 @@ describeIntegration("reusable credential lifecycle", () => {
           pendingCard: () =>
             findPendingAsk(db, { threadId: seeded.thread.id, runId: seeded.run.id }),
           /** The site's mail, signed as `from`'s domain, through the relay's inbound route. */
-          deliver: async (from: string) => {
+          deliver: async (from: string, text = mail) => {
             const response = await handles.app.request(
               `/api/v1/email/inbound?to=${encodeURIComponent(address)}`,
               {
@@ -900,7 +914,7 @@ describeIntegration("reusable credential lifecycle", () => {
                   authorization: `Bearer ${inboundEmail.secret}`,
                   "content-type": "message/rfc822",
                 },
-                body: signedEmail(from, address, mail),
+                body: signedEmail(from, address, text),
               },
             );
             expect(response.status).toBe(200);

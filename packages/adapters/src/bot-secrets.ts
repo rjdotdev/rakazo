@@ -51,6 +51,7 @@ import {
 import { getLogger } from "@rakazo/logging";
 import { z } from "zod";
 import { combineSignals, redactConnectorPayload } from "./connector-safety.js";
+import { runTookEmailedCode } from "./emailed-code.js";
 import type { RemoteTransportDependencies } from "./remote-mcp.js";
 import { createPrivateNetworkFetch, createSafeRemoteFetch } from "./remote-mcp.js";
 import { generateSecretValue } from "./secret-generator.js";
@@ -1368,7 +1369,21 @@ export async function resolveLoginFill(input: {
   };
 }
 
-/** This run's codes, those waiting and those the page took. */
+/**
+ * A code row of a run that took a code from its inbox cannot be read now, so what to hide is not
+ * known: the run must show no email, and start no attempt, until it can be read.
+ */
+export class RunCodeUnreadableError extends Error {
+  constructor() {
+    super("A one-time code this run holds could not be read");
+    this.name = "RunCodeUnreadableError";
+  }
+}
+
+/**
+ * This run's codes, those waiting and those the page took. A row that cannot be read is skipped,
+ * unless the run took a code from its inbox: then it throws RunCodeUnreadableError.
+ */
 async function loadRunCodes(
   prisma: PrismaClient,
   secretStore: Pick<SecretStore, "load">,
@@ -1384,7 +1399,10 @@ async function loadRunCodes(
     select: { id: true, ciphertext: true },
   });
   const held = await Promise.all(rows.map((row) => readRunCode(secretStore, row)));
-  return held.filter((code) => code !== undefined);
+  const read = held.filter((code) => code !== undefined);
+  if (read.length < held.length && (await runTookEmailedCode(prisma, runId)))
+    throw new RunCodeUnreadableError();
+  return read;
 }
 
 /**

@@ -379,7 +379,9 @@ function world(printed = "") {
           for (const change of whilePausing.splice(0)) change();
           return true;
         }),
-        answerRunInput: vi.fn(async (input: Row) => {
+        answerRunInput: vi.fn(async ({ claimEmail, ...input }: Row) => {
+          // The email is taken in the answer's own transaction, as the database does it.
+          await (prisma.$transaction as (fn: unknown) => Promise<unknown>)(claimEmail);
           answered.push(input);
           return true;
         }),
@@ -957,6 +959,34 @@ describe("request_secret for a code the site emailed to the bot", () => {
     expect(results[1]).toMatchObject({ details: { secret: "paused" } });
     expect(run.secrets).toMatchObject([{ kind: "run-code-spent:run-1" }]);
     const [read] = await run.attempt([{ name: "read_email", args: { id: "email-1" } }]);
+    expect(JSON.stringify(read)).not.toContain(CODE);
+  });
+
+  it("keeps an emailed code it could not read hidden when the bot asks again", async () => {
+    const run = world();
+    run.receives(CODE_EMAIL);
+    const load = vi.spyOn(secretStore, "load").mockRejectedValue(new Error("store unavailable"));
+    const [taken, asked] = await run.attempt([requestCode(), requestCode()]);
+    expect(taken).toMatchObject({ submitted: true });
+    expect(asked).toMatchObject({ details: { secret: "paused" } });
+    load.mockRestore();
+    expect(run.secrets).toMatchObject([{ kind: "run-code-spent:run-1" }]);
+    const [read] = await run.attempt([{ name: "read_email", args: { id: "email-1" } }]);
+    expect(read).toMatchObject({ email: { id: "email-1" } });
+    expect(JSON.stringify(read)).not.toContain(CODE);
+  });
+
+  it("starts no attempt while its emailed code cannot be read, and hides it once it can", async () => {
+    const run = world();
+    run.receives(CODE_EMAIL);
+    await run.attempt([requestCode()]);
+    vi.spyOn(secretStore, "load").mockRejectedValueOnce(new Error("store unavailable"));
+    // Setup fails and the job retries it, before any tool runs.
+    await expect(
+      run.attempt([{ name: "read_email", args: { id: "email-1" } }]),
+    ).rejects.toMatchObject({ cause: { name: "RunCodeUnreadableError" } });
+    const [read] = await run.attempt([{ name: "read_email", args: { id: "email-1" } }]);
+    expect(read).toMatchObject({ email: { id: "email-1" } });
     expect(JSON.stringify(read)).not.toContain(CODE);
   });
 

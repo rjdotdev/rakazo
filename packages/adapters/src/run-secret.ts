@@ -13,6 +13,7 @@ import { runCodeKind, runLoginKind, runSecretKind, withTransactionRetry } from "
 import type { ApprovalPausedToolResult } from "./approval-effect.js";
 import { internalTerminatingResult, resolveDuplicateEffectGate } from "./approval-effect.js";
 import { encodeRunCode, encodeRunLogin, prepareBotSecret } from "./bot-secrets.js";
+import { takeEmailedCode } from "./emailed-code.js";
 import { persistPreparedSecret } from "./secret-persistence.js";
 
 export function normalizeSecretAskPurpose(purpose: string | undefined): SecretAskPurpose {
@@ -277,18 +278,28 @@ async function holdRunCode(
 }
 
 /**
- * Keep a code read from the bot's own inbox for this run's page, sealed and stored as the answer
- * to a code card is, and return its row.
+ * Take the code for a request from the bot's own inbox (takeEmailedCode) and keep it for this
+ * run's page, sealed and stored as the answer to a code card is: nothing when there is none.
  */
 export async function holdEmailedCode(
   prisma: PrismaClient,
   secretStore: SecretStore,
-  input: { scope: RunScope; runId: string; origin: string; code: string; fromEmail: string },
+  input: Parameters<typeof takeEmailedCode>[1] & { scope: RunScope },
 ) {
-  const sealed = await sealRunCode(secretStore, input.scope, input.runId, input);
-  return persistPreparedSecret(prisma, secretStore, sealed, () =>
-    prisma.$transaction((tx) => holdRunCode(tx, input.scope, input.runId, sealed)),
-  );
+  return takeEmailedCode(prisma, input, async (found, claim) => {
+    const sealed = await sealRunCode(secretStore, input.scope, input.runId, {
+      origin: input.origin,
+      code: found.code,
+      fromEmail: found.emailId,
+    });
+    const stored = await persistPreparedSecret(prisma, secretStore, sealed, () =>
+      prisma.$transaction(async (tx) => {
+        await claim(tx);
+        return holdRunCode(tx, input.scope, input.runId, sealed);
+      }),
+    );
+    return { ...found, stored };
+  });
 }
 
 export async function tryCompleteConnectionWithCode(

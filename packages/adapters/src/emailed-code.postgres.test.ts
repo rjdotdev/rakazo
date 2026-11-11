@@ -1,7 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { createDb, runAsSystem } from "@rakazo/db";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { claimEmailedCode, findEmailedCode, takeEmailedCode } from "./emailed-code.js";
+import type { AnswerRunInput } from "@rakazo/db";
+import { answerRunInput, createDb, runAsSystem, runCodeKind } from "@rakazo/db";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  answerCodeCardsFromInbox,
+  claimEmailedCode,
+  EmailedCodeTaken,
+  findEmailedCode,
+  notePageForEmailedCode,
+  takeEmailedCode,
+} from "./emailed-code.js";
+import { createRunSecretWriter, holdEmailedCode } from "./run-secret.js";
+import { EncryptedSecretStore } from "./secrets.js";
 
 const postgres =
   process.env.VERIFY_DATABASE === "1" && process.env.DATABASE_URL ? describe : describe.skip;
@@ -15,6 +25,7 @@ postgres("emailed code claims (PostgreSQL)", () => {
   const system = <T>(fn: () => Promise<T>) => runAsSystem("test fixture", fn);
   const origin = "https://login.example.test";
   let botId = "";
+  let threadId = "";
   let runs: string[] = [];
   /** The run that won the race in the first case. */
   let winner = "";
@@ -39,28 +50,31 @@ postgres("emailed code claims (PostgreSQL)", () => {
         include: { thread: true },
       });
       botId = bot.id;
-      const threadId = bot.thread!.id;
-      runs = [];
-      for (const prompt of ["Sign in", "Sign in too"]) {
-        const task = await prisma.task.create({
-          data: { spaceId, userId, botId, threadId, prompt, status: "running" },
-        });
-        const run = await prisma.run.create({
-          data: {
-            spaceId,
-            userId,
-            botId,
-            threadId,
-            taskId: task.id,
-            status: "running",
-            trigger: "user_message",
-          },
-          select: { id: true },
-        });
-        runs.push(run.id);
-      }
+      threadId = bot.thread!.id;
     });
+    runs = [await newRun("running"), await newRun("running")];
   });
+
+  async function newRun(status: "running" | "waiting_input") {
+    return system(async () => {
+      const task = await prisma.task.create({
+        data: { spaceId, userId, botId, threadId, prompt: "Sign in", status: "running" },
+      });
+      const run = await prisma.run.create({
+        data: {
+          spaceId,
+          userId,
+          botId,
+          threadId,
+          taskId: task.id,
+          status,
+          trigger: "user_message",
+        },
+        select: { id: true },
+      });
+      return run.id;
+    });
+  }
 
   afterAll(async () => {
     try {
@@ -95,6 +109,20 @@ postgres("emailed code claims (PostgreSQL)", () => {
     );
   }
 
+  /** Claim as a run keeping the code does, in its own transaction: false when taken. */
+  const claimFor = (runId: string, emailId: string) =>
+    system(() =>
+      prisma.$transaction((tx) =>
+        claimEmailedCode(tx, { runId, spaceId, emailId, site: "example.test" }),
+      ),
+    ).then(
+      () => true,
+      (error) => {
+        if (error instanceof EmailedCodeTaken) return false;
+        throw error;
+      },
+    );
+
   const lookup = (runId: string) => ({
     botId,
     spaceId,
@@ -112,13 +140,7 @@ postgres("emailed code claims (PostgreSQL)", () => {
       Promise.all([findEmailedCode(prisma, lookup(runA)), findEmailedCode(prisma, lookup(runB))]),
     );
     expect(found).toMatchObject([{ emailId: email.id }, { emailId: email.id }]);
-    const claimed = await system(() =>
-      Promise.all(
-        [runA, runB].map((runId) =>
-          claimEmailedCode(prisma, { runId, spaceId, emailId: email.id, site: "example.test" }),
-        ),
-      ),
-    );
+    const claimed = await Promise.all([runA, runB].map((runId) => claimFor(runId, email.id)));
     expect(claimed.filter(Boolean)).toHaveLength(1);
     winner = claimed[0] ? runA : runB;
     // Taken: neither run finds it again.
@@ -135,15 +157,121 @@ postgres("emailed code claims (PostgreSQL)", () => {
 
   it("takes one emailed code per site in a run, and leaves the next email for another run", async () => {
     const email = await receive("731905");
-    const claim = (runId: string) =>
-      system(() =>
-        claimEmailedCode(prisma, { runId, spaceId, emailId: email.id, site: "example.test" }),
-      );
+    const claim = (runId: string) => claimFor(runId, email.id);
     // The run that won above already took this site's code.
     expect(await claim(winner)).toBe(false);
-    expect(await system(() => takeEmailedCode(prisma, lookup(winner)))).toBeUndefined();
+    expect(
+      await system(() =>
+        takeEmailedCode(prisma, lookup(winner), (_found, keep) => prisma.$transaction(keep)),
+      ),
+    ).toBeUndefined();
     // The refused claim wrote nothing, so the email is still free for the other run.
     const loser = runs.find((runId) => runId !== winner)!;
     expect(await claim(loser)).toBe(true);
+  });
+
+  /** The runs that took the email's code. */
+  const takers = (emailId: string) =>
+    system(async () =>
+      (
+        await prisma.externalEffect.findMany({
+          where: { idempotencyKey: `emailed-code:email:${emailId}` },
+          select: { runId: true },
+        })
+      ).map((effect) => effect.runId),
+    );
+  const heldCodes = (runId: string) =>
+    system(() => prisma.secret.count({ where: { userId, kind: runCodeKind(runId) } }));
+
+  it("leaves an email's code for the next try when keeping it for the page fails", async () => {
+    const runId = await newRun("running");
+    const email = await receive("605118");
+    const secretStore = new EncryptedSecretStore("test-only-encryption-key");
+    const scope = { userId, spaceId, botId };
+    const hold = (over: { scope?: typeof scope } = {}) =>
+      system(() => holdEmailedCode(prisma, secretStore, { ...lookup(runId), scope, ...over }));
+
+    // The code could not be sealed.
+    vi.spyOn(secretStore, "put").mockRejectedValueOnce(new Error("store unavailable"));
+    await expect(hold()).rejects.toThrow("store unavailable");
+    expect(await takers(email.id)).toEqual([]);
+    // Sealed, but its row could not be saved.
+    await expect(hold({ scope: { ...scope, userId: `${id}-nobody` } })).rejects.toThrow();
+    expect(await takers(email.id)).toEqual([]);
+    expect(await heldCodes(runId)).toBe(0);
+
+    // The next try takes it, once.
+    expect(await hold()).toMatchObject({ code: "605118", emailId: email.id });
+    expect(await takers(email.id)).toEqual([runId]);
+    expect(await heldCodes(runId)).toBe(1);
+    expect(await hold()).toBeUndefined();
+  });
+
+  it("leaves an email's code for the next look when answering the card with it fails", async () => {
+    const runId = await newRun("waiting_input");
+    const request = await system(() =>
+      prisma.externalEffect.create({
+        data: {
+          runId,
+          spaceId,
+          kind: "request_secret",
+          status: "intended",
+          idempotencyKey: `${runId}:request`,
+          request: {},
+        },
+        select: { id: true },
+      }),
+    );
+    await system(() =>
+      notePageForEmailedCode(prisma, { runId, spaceId, requestId: request.id, origin }),
+    );
+    const card = await system(() =>
+      prisma.message.create({
+        data: {
+          threadId,
+          seq: 1,
+          role: "bot",
+          botId,
+          runId,
+          blocks: [
+            {
+              kind: "ask",
+              text: "Code for login.example.test",
+              input: "secret",
+              oneTimeCode: { origin },
+              purpose: "otp",
+              status: "pending",
+            },
+          ],
+        },
+        select: { id: true },
+      }),
+    );
+    const email = await receive("905117");
+    const secretStore = new EncryptedSecretStore("test-only-encryption-key");
+    const writer = createRunSecretWriter(secretStore);
+    const deps = {
+      prisma,
+      events: {
+        answerRunInput: (input: AnswerRunInput) => answerRunInput(prisma, input, undefined, writer),
+      },
+      jobs: { enqueue: vi.fn(async () => undefined) },
+      botEmailDomain: "bots.test",
+    };
+    const answer = () => system(() => answerCodeCardsFromInbox(deps, { id: botId, userId }, runId));
+
+    // The code could not be sealed, so the card still waits.
+    vi.spyOn(secretStore, "put").mockRejectedValueOnce(new Error("store unavailable"));
+    expect(await answer()).toBe(0);
+    expect(await takers(email.id)).toEqual([]);
+    expect(await heldCodes(runId)).toBe(0);
+
+    // The next look answers it with the same email.
+    expect(await answer()).toBe(1);
+    expect(await takers(email.id)).toEqual([runId]);
+    expect(await heldCodes(runId)).toBe(1);
+    expect(
+      await system(() => prisma.message.findUniqueOrThrow({ where: { id: card.id } })),
+    ).toMatchObject({ blocks: [{ status: "answered" }] });
   });
 });

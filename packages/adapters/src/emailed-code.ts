@@ -9,7 +9,7 @@ import type { MessageBlock } from "@rakazo/contracts";
 import { extractOneTimeCode } from "@rakazo/contracts";
 import { isMessagingChannelRun } from "@rakazo/core";
 import { hostSite } from "@rakazo/core/egress";
-import type { PrismaClient, ThreadEvents } from "@rakazo/db";
+import type { Prisma, PrismaClient, ThreadEvents } from "@rakazo/db";
 import { findPendingAsk, teamChatRunFromOwner } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 
@@ -151,53 +151,73 @@ export async function findEmailedCode(
   return { ...newest, site };
 }
 
-class ClaimTaken extends Error {}
+/** Another run, or this run for the same site, already took the email's code. */
+export class EmailedCodeTaken extends Error {}
 
 /**
- * Take the email's code for `runId`, atomically: false when another run, or this run for the same
- * site, already took one. A claim is never given back, so a code is offered once.
+ * Take the email's code for `runId` in `tx`, the transaction that keeps the code: throws
+ * EmailedCodeTaken when it was already taken, which rolls `tx` back. So a claim stands only with
+ * the kept code, and a code that was kept is offered once: a claim is never given back.
  */
 export async function claimEmailedCode(
-  prisma: PrismaClient,
+  tx: Prisma.TransactionClient,
   input: { runId: string; spaceId: string; emailId: string; site: string },
-): Promise<boolean> {
+): Promise<void> {
   const keys = [runSiteClaimKey(input.runId, input.site), emailClaimKey(input.emailId)];
-  try {
-    await prisma.$transaction(async (tx) => {
-      const { count } = await tx.externalEffect.createMany({
-        data: keys.map((idempotencyKey) => ({
-          runId: input.runId,
-          spaceId: input.spaceId,
-          kind: EMAILED_CODE_EFFECT,
-          status: "taken",
-          idempotencyKey,
-          request: { emailId: input.emailId, site: input.site },
-        })),
-        skipDuplicates: true,
-      });
-      if (count !== keys.length) throw new ClaimTaken();
-    });
-    return true;
-  } catch (error) {
-    if (error instanceof ClaimTaken) return false;
-    throw error;
-  }
+  const { count } = await tx.externalEffect.createMany({
+    data: keys.map((idempotencyKey) => ({
+      runId: input.runId,
+      spaceId: input.spaceId,
+      kind: EMAILED_CODE_EFFECT,
+      status: "taken",
+      idempotencyKey,
+      request: { emailId: input.emailId, site: input.site },
+    })),
+    skipDuplicates: true,
+  });
+  if (count !== keys.length) throw new EmailedCodeTaken();
 }
 
-/** Find the inbox's code for a request and claim it, as one step. */
-export async function takeEmailedCode(
+/** Whether the run took a code from its inbox: its claim is made with the kept code, at once. */
+export async function runTookEmailedCode(
+  prisma: Pick<PrismaClient, "externalEffect">,
+  runId: string,
+): Promise<boolean> {
+  const claim = await prisma.externalEffect.findFirst({
+    where: { runId, kind: EMAILED_CODE_EFFECT, status: "taken" },
+    select: { id: true },
+  });
+  return claim !== null;
+}
+
+/**
+ * Find the inbox's code for a request and keep it with `keep`, which makes the claim it is given
+ * in the transaction that stores the code (claimEmailedCode): nothing when there is no code or
+ * another run took it first. When keeping fails, the email stays for the next try.
+ */
+export async function takeEmailedCode<T>(
   prisma: PrismaClient,
   input: Parameters<typeof findEmailedCode>[1],
-): Promise<{ code: string; emailId: string } | undefined> {
+  keep: (
+    found: { code: string; emailId: string },
+    claim: (tx: Prisma.TransactionClient) => Promise<void>,
+  ) => Promise<T>,
+): Promise<T | undefined> {
   const found = await findEmailedCode(prisma, input);
   if (!found) return undefined;
-  const claimed = await claimEmailedCode(prisma, {
-    runId: input.runId,
-    spaceId: input.spaceId,
-    emailId: found.emailId,
-    site: found.site,
-  });
-  return claimed ? { code: found.code, emailId: found.emailId } : undefined;
+  const claim = (tx: Prisma.TransactionClient) =>
+    claimEmailedCode(tx, {
+      runId: input.runId,
+      spaceId: input.spaceId,
+      emailId: found.emailId,
+      site: found.site,
+    });
+  try {
+    return await keep({ code: found.code, emailId: found.emailId }, claim);
+  } catch (error) {
+    if (error instanceof EmailedCodeTaken) return undefined;
+    throw error;
+  }
 }
 
 /**
@@ -254,7 +274,8 @@ export async function runPageOrigin(ctx: {
  * claimed for that run, as findEmailedCode and claimEmailedCode decide. An email that would answer
  * two waiting cards answers neither. The card's own answer path settles a race with the owner:
  * whichever comes second finds the card answered and does nothing. With `runId`, only that run's
- * card: the run looks again once it waits, for mail that came while it was saving the card.
+ * card: the run looks again once it waits, for mail that came while it was saving the card, and
+ * still answers neither when the email would also answer another run's card.
  * Returns how many cards it answered.
  */
 export async function answerCodeCardsFromInbox(
@@ -275,7 +296,6 @@ export async function answerCodeCardsFromInbox(
         botId: bot.id,
         userId: bot.userId,
         status: "waiting_input",
-        ...(runId ? { id: runId } : {}),
       },
       select: {
         id: true,
@@ -327,15 +347,9 @@ export async function answerCodeCardsFromInbox(
       if (found) answers.push({ run, messageId: pending.messageId, found });
     }
     for (const { run, messageId, found } of answers) {
+      if (runId && run.id !== runId) continue;
       if (answers.filter((other) => other.found.emailId === found.emailId).length > 1) continue;
       try {
-        const claimed = await claimEmailedCode(deps.prisma, {
-          runId: run.id,
-          spaceId: run.spaceId,
-          emailId: found.emailId,
-          site: found.site,
-        });
-        if (!claimed) continue;
         const answered = await deps.events.answerRunInput({
           spaceId: run.spaceId,
           threadId: run.threadId,
@@ -344,6 +358,14 @@ export async function answerCodeCardsFromInbox(
           answeredByUserId: run.userId,
           answer: found.code,
           fromEmail: found.emailId,
+          // In the answer's own transaction, so a card that is not answered leaves the email.
+          claimEmail: (tx) =>
+            claimEmailedCode(tx, {
+              runId: run.id,
+              spaceId: run.spaceId,
+              emailId: found.emailId,
+              site: found.site,
+            }),
         });
         if (!answered) continue;
         count += 1;
@@ -352,6 +374,7 @@ export async function answerCodeCardsFromInbox(
           getLogger().error("emailed code continue enqueue", error);
         });
       } catch (error) {
+        if (error instanceof EmailedCodeTaken) continue;
         // The card changed under this answer, usually because the owner answered it first.
         getLogger().warn("emailed code did not answer its card", {
           errorName: error instanceof Error ? error.name : typeof error,

@@ -7,8 +7,8 @@ import {
 import { attachmentComputerPath, matchesSearchQuery, redactSecrets } from "@rakazo/core";
 import { claimBotEmailName, contentEncryptionOf, reserveBotEmailSend } from "@rakazo/db";
 import { z } from "zod";
-import { loadRunEmailedCodes } from "./bot-secrets.js";
-import { redactConnectorPayload } from "./connector-safety.js";
+import { loadRunEmailedCodes, RunCodeUnreadableError } from "./bot-secrets.js";
+import { maskPayload, redactConnectorPayload } from "./connector-safety.js";
 import type { RunContext } from "./run-context.js";
 import { isRunTainted, refuseOwnerSettingsChange } from "./run-context.js";
 import type { ToolCall, ToolHandlers } from "./run-tool-gate.js";
@@ -24,9 +24,14 @@ const POLL_MS = 3_000;
 const DELETE_EMAIL_MAX_IDS = 50;
 /** Emails a search fetches to check once decrypted, as blind-index matches can be false. */
 const SEARCH_CANDIDATES = 100;
-/** Emails a search in a run that hides values reads, at most, to check them itself. */
+/** Emails a search in a run holding a code from an email reads, at most, to check them itself. */
 const SEARCH_HIDDEN_EMAILS = 1_000;
 const SEARCHED_FIELDS = ["fromAddress", "fromName", "subject", "text"] as const;
+/**
+ * What the inbox itself writes about an email. Every other field the tool returns is the sender's
+ * and is masked; masking these could only hint at a hidden value's characters.
+ */
+const INBOX_FIELDS = new Set(["id", "receivedAt"]);
 
 const ReadEmailSchema = z
   .object({
@@ -84,12 +89,29 @@ async function readEmail(ctx: RunContext, call: ToolCall) {
   // The inbox is the owner's mail: only their own runs of their own bot read it.
   if (run.userId !== bot.userId) return call.finish({ error: "Only the bot's owner can do that." });
   // A code the run took from its inbox is hidden in every email also with any separators between
-  // its characters (hideOneTimeCodeInEmail); only a run that hides anything can hold one.
-  const emailedCodes = ctx.secrets.length
-    ? await loadRunEmailedCodes(deps.prisma, deps.secretStore, run, ctx.runId)
-    : [];
+  // its characters (hideOneTimeCodeInEmail); only a run that hides anything can hold one. While
+  // that code cannot be read, no email is shown: any of them could hold it.
+  let emailedCodes: string[] = [];
+  try {
+    if (ctx.secrets.length)
+      emailedCodes = await loadRunEmailedCodes(deps.prisma, deps.secretStore, run, ctx.runId);
+  } catch (error) {
+    if (!(error instanceof RunCodeUnreadableError)) throw error;
+    return call.finish({ error: "The inbox cannot be read right now. Try again in a minute." });
+  }
   const hide = (value: string) =>
     emailedCodes.reduce(hideOneTimeCodeInEmail, redactSecrets(value, ctx.secrets));
+  /** An email as the tool returns it, hidden as a whole, so no field of it can be missed. */
+  const shown = (email: Record<string, unknown>) =>
+    redactConnectorPayload(
+      Object.fromEntries(
+        Object.entries(email).map(([key, value]) => [
+          key,
+          INBOX_FIELDS.has(key) ? value : maskPayload(value, hide),
+        ]),
+      ),
+      ctx.secrets,
+    );
 
   if (input.id) {
     const email = await deps.prisma.botEmailMessage.findFirst({
@@ -117,14 +139,15 @@ async function readEmail(ctx: RunContext, call: ToolCall) {
     // Copied before the bot's next computer tool, where history tools put files too.
     ctx.computer.copyEarlierFiles(kept);
     // A service can echo a password or code the bot holds as a secret.
-    const shown = redactConnectorPayload(
-      {
+    return call.finish({
+      untrusted: true,
+      email: shown({
         id: email.id,
-        from: hide(sender(email)),
+        from: sender(email),
         ...(email.sent ? { sent: true } : { verified: email.verified }),
         to: email.to,
         ...(email.cc.length ? { cc: email.cc } : {}),
-        subject: hide(email.subject),
+        subject: email.subject,
         receivedAt: email.receivedAt.toISOString(),
         text,
         ...(offset + TEXT_PAGE_CHARS < body.length
@@ -135,17 +158,15 @@ async function readEmail(ctx: RunContext, call: ToolCall) {
               files: files.map((file) =>
                 file.artifactId && file.mimeType
                   ? {
-                      name: hide(file.name),
+                      name: file.name,
                       path: attachmentComputerPath(file.artifactId, file.mimeType),
                     }
-                  : { name: hide(file.name), unavailable: true },
+                  : { name: file.name, unavailable: true },
               ),
             }
           : {}),
-      },
-      ctx.secrets,
-    );
-    return call.finish({ untrusted: true, email: shown });
+      }),
+    });
   }
 
   const startedAt = Date.now();
@@ -186,11 +207,10 @@ async function readEmail(ctx: RunContext, call: ToolCall) {
     ...(checkedTo ? { receivedAt: { ...where.receivedAt, gt: checkedTo } } : {}),
   });
   /**
-   * The database matches stored text, hidden values and all, so a search there would tell a run
-   * that hides any value, such as a code from an email or a password a page echoed, which email
-   * holds one. That run reads its mail itself, newest first (oldest first after since), and
-   * matches only what it may read, so what it returns and how far it read never depend on a
-   * hidden value.
+   * The database matches stored text, codes and all, so a search there would tell a run holding
+   * a code from an email which email holds it, however written. That run reads its mail itself,
+   * newest first (oldest first after since), and matches only what it may read, so what it
+   * returns and how far it read never depend on the code. Every other run searches the database.
    */
   const searchHidden = async (query: string) => {
     const window = inWindow();
@@ -219,7 +239,7 @@ async function readEmail(ctx: RunContext, call: ToolCall) {
   };
   // Asked again on every look: a Space's first key can appear while the bot waits.
   const list = async () => {
-    if (input.query && ctx.secrets.length) return searchHidden(input.query);
+    if (input.query && emailedCodes.length) return searchHidden(input.query);
     const search = input.query ? await emailQuery(ctx, input.query) : undefined;
     const found = await fetchEmails({
       where: { ...inWindow(), ...search?.where },
@@ -251,9 +271,9 @@ async function readEmail(ctx: RunContext, call: ToolCall) {
   const nextSince = (checkedTo ?? newest?.receivedAt)?.toISOString() ?? input.since;
   const listed = emails.map((email) => ({
     id: email.id,
-    from: hide(sender(email)),
+    from: sender(email),
     ...(email.sent ? { sent: true } : { verified: email.verified }),
-    subject: hide(email.subject),
+    subject: email.subject,
     receivedAt: email.receivedAt.toISOString(),
     preview: hide(email.text).slice(0, PREVIEW_CHARS).replace(/\s+/g, " ").trim(),
     ...((email.attachments as SavedFile[]).length
@@ -263,7 +283,7 @@ async function readEmail(ctx: RunContext, call: ToolCall) {
   return call.finish({
     untrusted: true,
     ...(nextSince ? { nextSince } : {}),
-    emails: redactConnectorPayload(listed, ctx.secrets),
+    emails: listed.map(shown),
   });
 }
 

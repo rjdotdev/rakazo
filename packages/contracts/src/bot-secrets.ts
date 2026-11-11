@@ -337,33 +337,49 @@ const CODE_FORMS = [
 const CODE_PATTERN = new RegExp(`${CODE_LEAD}(?:${CODE_FORMS.join("|")})${CODE_TRAIL}`, "gu");
 const YEAR = /^(?:19|20)[0-9]{2}$/;
 
-const word = (cue: string) => String.raw`(?<![\p{L}\p{M}\p{N}])(?:${cue})(?![\p{L}\p{M}])`;
-const stem = (cue: string) => String.raw`(?<![\p{L}\p{M}\p{N}])(?:${cue})`;
-/** Words that name a sign-in code, in the languages the app ships. */
+// Han, kana and Hangul text puts no space between words, so their letters end a word written in
+// another script: "您的code是" names a code. A cue in those scripts has no word edges at all.
+const NOT_WORD_EDGE = String.raw`(?![${SPACELESS}])[\p{L}\p{M}\p{N}]`;
+const word = (cue: string) =>
+  String.raw`(?<!${NOT_WORD_EDGE})(?:${cue})(?!(?![${SPACELESS}])[\p{L}\p{M}])`;
+const stem = (cue: string) => `(?<!${NOT_WORD_EDGE})(?:${cue})`;
+/**
+ * Words that name a sign-in code, in the languages the app ships. A short word other words begin
+ * or end with (codec, decode, кодек, kodlama) counts only whole, with its own endings; a longer,
+ * distinctive one counts as the start of a word, so its every form does.
+ */
 const CODE_CUE = new RegExp(
   [
-    // Also the end of a compound, as in Bestätigungscode, pincode or passcode.
-    "code",
-    ...["otp", "pin", "2fa", "пин", "पिन"].map(word),
+    ...[
+      // English, French and Dutch, and German with the compounds that name a sign-in code.
+      "(?:pass|pin|sicherheits|anmelde|zugangs|login|inlog|beveiligings|toegangs)?codes?",
+      "otp",
+      "pin",
+      "2fa",
+      "пин",
+      "पिन",
+      "c[óo]digos?",
+      // Polish and Turkish: kod, kodu, kodem, kody, kodunuz.
+      "kod(?:u(?:n(?:uz)?)?|em|y|ów|zie)?",
+      "код(?:а|у|ом|е|ы|ов)?",
+      "कोड",
+    ].map(word),
     ...[
       "verification",
       "one[- ]?time",
       "verifizierung",
       "bestätigung",
       "einmal",
-      "c[óo]digo",
       "verificaci[óo]n",
       "un solo uso",
       "v[ée]rification",
       "usage unique",
       "verificatie",
       "eenmalig",
-      "kod",
       "weryfikac",
       "jednorazow",
       "verifica[çc][ãa]o",
       "uso [úu]nico",
-      "код",
       "подтвержд",
       "верификац",
       "одноразов",
@@ -373,12 +389,9 @@ const CODE_CUE = new RegExp(
       "सत्यापन",
       "ओटीपी",
       "एक बार",
-      "कोड",
     ].map(stem),
-    // Hebrew joins "the" and other prefixes to the word itself.
-    "קוד",
-    "אימות",
-    "חד[- ]?פעמי",
+    // Hebrew joins "the", "of" and other one-letter words to the word itself.
+    String.raw`(?<!${NOT_WORD_EDGE})(?:[הבולמכש]|של)?(?:קוד(?:ים)?(?![\p{L}\p{M}])|אימות|חד[- ]?פעמי)`,
     "コード",
     "認証",
     "ワンタイム",
@@ -396,19 +409,26 @@ const CODE_CUE = new RegExp(
   ].join("|"),
   "iu",
 );
-/** Codes that are not for signing in: postal, promotional and barcodes. */
+/** Codes that are not for signing in: postal, promotional, order numbers and barcodes. */
 const NOT_A_CODE_CUE = new RegExp(
   [
-    String.raw`(?<![\p{L}\p{N}])(?:zip|postal|post|promo|promotional|discount|coupon|voucher|gift|area|country|tracking|referral|bar|rabatt|gutschein|kortings)[ -]?code`,
+    String.raw`(?<![\p{L}\p{N}])(?:zip|postal|post|promo|promotional|discount|coupon|voucher|gift|area|country|order|tracking|invoice|reference|referral|bar|rabatt|gutschein|kortings)[ -]?codes?`,
     "c[óo]d(?:e|igo) (?:postal|promo)",
     "kod (?:pocztowy|rabatowy|promocyjny)",
     "(?:posta|indirim|promosyon) kodu",
     "промокод",
-    "(?:クーポン|プロモーション)コード",
-    "(?:쿠폰|할인) ?코드",
+    // Words in these scripts run together, so the compounds that name other codes are listed.
+    "(?:バー|QR|クーポン|プロモーション|割引|ギフト)コード",
+    "(?:바|QR|쿠폰|할인|프로모션) ?코드",
   ].join("|"),
   "giu",
 );
+/**
+ * A word right before a number that names it as something else: "Order no. 48213977",
+ * "ZIP 94043", "Tracking number: 1234 5678". Tried on the few characters before one number.
+ */
+const OTHER_NUMBER =
+  /(?<![\p{L}\p{N}])(?:zip|postal|postcode|promo|discount|coupon|order|tracking|invoice|reference|barcode)(?:[ -]?(?:codes?|numbers?|no|nr|ids?))?[\s:#.-]*$/iu;
 /** How far a cue may be from the number it names, on the same line. */
 const CODE_CUE_REACH = 40;
 
@@ -436,6 +456,18 @@ function nearestLineWithText(text: string, from: number, step: -1 | 1): string {
  * or, on a line holding nothing else, a cue in the subject or on the nearest line with text above
  * or below it ("Order number" above it makes it no code).
  */
+/**
+ * Whether a word right before the number at `start` names it as something other than a code: on
+ * its line, or, on a line of its own, at the end of the nearest line with text above it.
+ */
+function namedOtherwise(text: string, start: number): boolean {
+  const lineStart = text.lastIndexOf("\n", start - 1) + 1;
+  const before = text.slice(lineStart, start).trim()
+    ? text.slice(lineStart, start)
+    : nearestLineWithText(text, lineStart - 1, -1);
+  return OTHER_NUMBER.test(before.slice(-CODE_CUE_REACH));
+}
+
 function cuedCode(text: string, start: number, end: number, subjectCued: boolean): boolean {
   const lineStart = text.lastIndexOf("\n", start - 1) + 1;
   const lineEnd = text.indexOf("\n", end);
@@ -475,6 +507,7 @@ export function extractOneTimeCode(email: { subject: string; text: string }): st
       const written = match[0];
       const code = normalizeOneTimeCode(written.replace(/[ -]/g, ""));
       if (!code || YEAR.test(code) || !oneTimeCodeWritings(code).includes(written)) continue;
+      if (namedOtherwise(text, match.index)) continue;
       if (cued || cuedCode(text, match.index, match.index + written.length, subjectCued)) {
         codes.add(code);
       }

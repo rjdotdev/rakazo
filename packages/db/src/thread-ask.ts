@@ -129,6 +129,11 @@ export interface AnswerRunInput {
   dismiss?: boolean;
   /** Only for a code card answered from the bot's own inbox: the email the code was read from. */
   fromEmail?: string;
+  /**
+   * With `fromEmail`: takes that email for the run in the answer's transaction, so it stays free
+   * when the card is not answered. It throws when another run took it, which rolls the answer back.
+   */
+  claimEmail?: (tx: Prisma.TransactionClient) => Promise<void>;
 }
 
 /** What request_secret returns to the bot once the user dismissed its card. */
@@ -257,7 +262,7 @@ async function commitAnswerRunInput(
   // Login fields belong only to a login card, which cannot be saved without them.
   if (loginAsk ? !login : input.username !== undefined || input.fields !== undefined) return null;
   if (input.remember !== undefined && !loginAsk) return null;
-  if (input.fromEmail !== undefined && !code) return null;
+  if ((input.fromEmail !== undefined || input.claimEmail) && !code) return null;
   if (secretAsk && input.answer.length > BOT_SECRET_VALUE_MAX_LENGTH)
     throw new AnswerTooLongError();
   let approvalEffect: {
@@ -412,6 +417,7 @@ async function commitAnswerRunInput(
     });
     if (task.count !== 1) throw new Error("Run task was not available to answer");
   } else if (secretAsk) {
+    await input.claimEmail?.(tx);
     await runSecretWriter!.store({
       botId: run.botId,
       credential: pendingAsk.credential,
