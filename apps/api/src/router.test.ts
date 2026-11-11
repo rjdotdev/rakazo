@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { InferRouterInitialContext } from "@orpc/server";
-import { createRouterClient } from "@orpc/server";
+import { createRouterClient, onError } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/fetch";
 import type { ManagedConnectorProvider } from "@rakazo/adapter-kit";
 import {
@@ -56,6 +56,7 @@ import {
   HEARTBEAT_MS,
   SESSION_RECHECK_MS,
 } from "./router.js";
+import { handleRpcError } from "./rpc-errors.js";
 
 const withRoleDeps = (deps: RouterDeps) => {
   withModelRoles(deps.prisma);
@@ -4402,8 +4403,10 @@ describe("computer terminal and file transfer", () => {
       readFile: vi.fn().mockResolvedValue(new TextEncoder().encode("hello")),
       writeFile: vi.fn().mockResolvedValue(undefined),
     };
+    const events = { append: vi.fn(async () => undefined) };
     const prisma = {
       spaceMember: { count: vi.fn(async () => 1) },
+      event: { findMany: vi.fn().mockResolvedValue([]) },
       bot: {
         findFirst: vi.fn().mockResolvedValue({
           id: "bot-1",
@@ -4431,6 +4434,7 @@ describe("computer terminal and file transfer", () => {
     } as unknown as PrismaClient;
     const deps = {
       prisma,
+      events,
       sandbox,
       home,
       jobs: { enqueue: vi.fn().mockResolvedValue(undefined) },
@@ -4442,7 +4446,9 @@ describe("computer terminal and file transfer", () => {
       },
       dataDir: "/tmp/rakazo-router-test",
     } as unknown as RouterDeps;
-    const handler = new RPCHandler(createRouter(deps));
+    const handler = new RPCHandler(createRouter(deps), {
+      clientInterceptors: [onError((error, { path }) => handleRpcError(error, path))],
+    });
     const call = async (procedure: string, json: Record<string, unknown>) => {
       const response = await handle(
         handler,
@@ -4455,7 +4461,7 @@ describe("computer terminal and file transfer", () => {
       );
       return { status: response.status, body: await response.json() };
     };
-    return { sandbox, prisma, call };
+    return { sandbox, prisma, call, events };
   }
 
   it("prepares an unused bot's folders before listing a running Team Computer", async () => {
@@ -4653,7 +4659,189 @@ describe("computer terminal and file transfer", () => {
     const text = setup();
     await expect(text.call("readFile", { path: "notes.txt" })).resolves.toEqual({
       status: 200,
-      body: { json: { path: "notes.txt", content: "hello" } },
+      body: {
+        json: {
+          path: "notes.txt",
+          content: "hello",
+          startLine: 1,
+          endLine: 1,
+          totalLines: 1,
+          partial: false,
+        },
+      },
+    });
+  });
+
+  it("pages a text file and refuses paths outside this bot", async () => {
+    const paged = setup();
+    paged.sandbox.readFile.mockResolvedValue(new TextEncoder().encode("a\nb\nc"));
+    await expect(
+      paged.call("readFile", { path: "notes.txt", offset: 2, limit: 1 }),
+    ).resolves.toEqual({
+      status: 200,
+      body: {
+        json: {
+          path: "notes.txt",
+          content: "b",
+          startLine: 2,
+          endLine: 2,
+          totalLines: 3,
+          partial: false,
+        },
+      },
+    });
+
+    const confined = setup();
+    await expect(confined.call("files", { path: "/" })).resolves.toMatchObject({ status: 200 });
+    expect(confined.sandbox.listFiles).toHaveBeenCalledWith(
+      expect.anything(),
+      "bots/bot-1",
+      expect.anything(),
+    );
+    await expect(confined.call("files", { path: "shared/plan.md" })).resolves.toMatchObject({
+      status: 200,
+    });
+    expect(confined.sandbox.listFiles).toHaveBeenCalledWith(
+      expect.anything(),
+      "shared/plan.md",
+      expect.anything(),
+    );
+    await expect(
+      confined.call("readFile", { path: "bots/bot-2/secret.txt" }),
+    ).resolves.toMatchObject({
+      status: 400,
+      body: { json: { message: "Path escapes the bot workspace" } },
+    });
+    await expect(confined.call("files", { path: "/etc/passwd" })).resolves.toMatchObject({
+      status: 400,
+    });
+    expect(confined.sandbox.readFile).not.toHaveBeenCalled();
+    expect(confined.sandbox.listFiles).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "bots/bot-2",
+      expect.anything(),
+    );
+
+    const otherSpace = setup();
+    (otherSpace.prisma.bot.findFirst as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      null,
+    );
+    await expect(otherSpace.call("files", { path: "" })).resolves.toMatchObject({ status: 404 });
+    expect(otherSpace.sandbox.listFiles).not.toHaveBeenCalled();
+    expect(otherSpace.prisma.bot.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "bot-1", spaceId: "workspace-1" }),
+      }),
+    );
+  });
+
+  it("saves text without computer control and lists what this chat wrote", async () => {
+    const running = setup();
+    await expect(
+      running.call("saveFile", { path: "notes/weekly.md", content: "hello" }),
+    ).resolves.toMatchObject({
+      status: 200,
+      body: { json: { ok: true, path: "notes/weekly.md" } },
+    });
+    expect(running.sandbox.writeFile).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "sandbox-ref-1" }),
+      { path: "bots/bot-1/notes/weekly.md", content: new TextEncoder().encode("hello") },
+      expect.anything(),
+    );
+    expect(running.events.append).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadId: "thread-1",
+        type: "computer.command",
+        payload: expect.objectContaining({ kind: "write_file", command: "notes/weekly.md" }),
+      }),
+    );
+    running.events.append.mockRejectedValueOnce(new Error("event store unavailable"));
+    await expect(
+      running.call("saveFile", { path: "notes/weekly.md", content: "again" }),
+    ).resolves.toMatchObject({ status: 200 });
+
+    await expect(
+      running.call("saveFile", { path: "bots/bot-2/secret.txt", content: "no" }),
+    ).resolves.toMatchObject({ status: 400 });
+
+    const root = await mkdtemp(path.join(tmpdir(), "rakazo-computer-save-"));
+    try {
+      const stopped = setup(
+        { state: "stopped", providerRef: null },
+        undefined,
+        new LocalAgentHomeStore(root),
+      );
+      await expect(
+        stopped.call("saveFile", { path: "notes.txt", content: "saved" }),
+      ).resolves.toMatchObject({ status: 200 });
+      expect(stopped.sandbox.writeFile).not.toHaveBeenCalled();
+      await expect(
+        readFile(path.join(root, "homes", "home-1", "bots", "bot-1", "notes.txt"), "utf8"),
+      ).resolves.toBe("saved");
+      await expect(stopped.call("downloadFile", { path: "notes.txt" })).resolves.toEqual({
+        status: 200,
+        body: {
+          json: { path: "notes.txt", contentBase64: Buffer.from("saved").toString("base64") },
+        },
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+
+    const history = setup();
+    (history.prisma.event.findMany as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        createdAt: new Date("2026-01-04T00:00:00.000Z"),
+        payload: {
+          executionId: "shell",
+          kind: "shell",
+          command: "ls",
+          cwd: ".",
+          status: "done",
+          exitCode: 0,
+          output: "",
+        },
+      },
+      {
+        createdAt: new Date("2026-01-03T00:00:00.000Z"),
+        payload: {
+          executionId: "other",
+          kind: "write_file",
+          command: "bots/bot-2/secret.txt",
+          cwd: ".",
+          status: "done",
+          exitCode: 0,
+          output: "",
+        },
+      },
+      {
+        createdAt: new Date("2026-01-02T00:00:00.000Z"),
+        payload: {
+          executionId: "notes",
+          kind: "write_file",
+          command: "notes/weekly.md",
+          cwd: ".",
+          status: "done",
+          exitCode: 0,
+          output: "",
+        },
+      },
+      {
+        createdAt: new Date("2026-01-01T00:00:00.000Z"),
+        payload: {
+          executionId: "older",
+          kind: "write_file",
+          command: "notes/weekly.md",
+          cwd: ".",
+          status: "done",
+          exitCode: 0,
+          output: "",
+        },
+      },
+    ]);
+    await expect(history.call("changedFiles", {})).resolves.toEqual({
+      status: 200,
+      body: { json: [{ path: "notes/weekly.md", at: "2026-01-02T00:00:00.000Z" }] },
     });
   });
 

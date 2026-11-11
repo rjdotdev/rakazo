@@ -161,6 +161,30 @@ describe("LocalAgentHomeStore path containment", () => {
     );
   });
 
+  it("reads a byte window and the file's full size", async () => {
+    const { store, home } = await fixture();
+    await writeFile(path.join(home, "notes.bin"), Buffer.from([0, 1, 2, 3, 4]));
+
+    await expect(
+      store.readBytes("bot-1", "notes.bin", context, { offset: 1, maxBytes: 2 }),
+    ).resolves.toEqual({
+      bytes: Uint8Array.from([1, 2]),
+      size: 5,
+    });
+    await expect(store.readBytes("bot-1", "notes.bin", context, { maxBytes: 0 })).resolves.toEqual({
+      bytes: new Uint8Array(),
+      size: 5,
+    });
+  });
+
+  it("rejects a byte read through a symlink outside the home", async () => {
+    const { root, store, home } = await fixture();
+    await writeFile(path.join(root, "outside.bin"), "secret");
+    await symlink(path.join(root, "outside.bin"), path.join(home, "escape.bin"));
+
+    await expect(store.readBytes("bot-1", "escape.bin", context)).rejects.toThrow(/escapes/i);
+  });
+
   it("allows symlinks whose resolved target stays inside the bot home", async () => {
     const { store, home } = await fixture();
     await writeFile(path.join(home, "target.txt"), "before");

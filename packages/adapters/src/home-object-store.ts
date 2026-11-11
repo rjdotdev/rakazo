@@ -144,6 +144,15 @@ export class ObjectAgentHomeStore extends LocalAgentHomeStore {
     return this.reading(botId, () => super.readFile(botId, filePath, context, options));
   }
 
+  override async readBytes(
+    botId: string,
+    filePath: string,
+    context: AdapterContext,
+    options?: { maxBytes?: number; offset?: number },
+  ) {
+    return this.reading(botId, () => super.readBytes(botId, filePath, context, options));
+  }
+
   override async list(botId: string, dirPath: string, context: AdapterContext) {
     return this.reading(botId, () => super.list(botId, dirPath, context));
   }

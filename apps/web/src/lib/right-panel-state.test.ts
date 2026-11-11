@@ -22,6 +22,15 @@ describe("right panel preferences", () => {
     writeRightPanelState("user-a:space-a:bot-a", null, "routine-a");
     expect(readRightPanelState("user-a:space-a:bot-a")).toEqual({ panel: null });
   });
+  it("remembers the Files tab", () => {
+    const entries = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => entries.get(key) ?? null,
+      setItem: (key: string, value: string) => entries.set(key, value),
+    });
+    writeRightPanelState("state", "files");
+    expect(readRightPanelState("state")).toEqual({ panel: "files" });
+  });
   it("remembers the Routines tab", () => {
     const entries = new Map<string, string>();
     vi.stubGlobal("localStorage", {

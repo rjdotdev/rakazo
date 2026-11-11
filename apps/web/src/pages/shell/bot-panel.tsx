@@ -42,6 +42,7 @@ import {
   ToolsGroup,
   VoiceGroup,
 } from "./bot-settings-sections";
+import { ChatFiles } from "./chat-files";
 
 const ScratchpadSection = lazyComponent(() =>
   import("../ScratchpadSection").then((module) => module.ScratchpadSection),
@@ -63,9 +64,9 @@ function advancedValues(bot: Bot) {
   ] as const;
 }
 
-export type BotPanelTab = "computer" | "routines" | "pages" | "settings";
+export type BotPanelTab = "computer" | "files" | "routines" | "pages" | "settings";
 
-/** A bot's profile above its Computer, Routines, Pages and Advanced tabs. */
+/** A bot's profile above its Computer, Files, Routines, Pages and Advanced tabs. */
 export function BotSettings({
   bot,
   tab = "settings",
@@ -528,9 +529,12 @@ export function BotSettings({
         <BotEmail bot={{ id: bot.id, name }} />
       </div>
       <Tabs value={tab} onValueChange={(next) => onTabChange?.(next as BotPanelTab)}>
-        <TabsList className="w-full">
+        <TabsList className="w-full overflow-x-auto [scrollbar-width:none]">
           <TabsTrigger value="computer">
             <Trans>Computer</Trans>
+          </TabsTrigger>
+          <TabsTrigger value="files">
+            <Trans>Files</Trans>
           </TabsTrigger>
           <TabsTrigger value="routines">
             <Trans>Routines</Trans>
@@ -544,6 +548,9 @@ export function BotSettings({
         </TabsList>
         <TabsContent value="computer" className="pt-4">
           {computer}
+        </TabsContent>
+        <TabsContent value="files" className="pt-4">
+          {tab === "files" ? <ChatFiles botId={bot.id} computerMode={bot.computerMode} /> : null}
         </TabsContent>
         <TabsContent value="routines" className="pt-4">
           {routines}
