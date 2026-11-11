@@ -11,7 +11,7 @@ import type { MobileMessage } from "../../lib/mobile-types";
 import { useMobileTokens } from "../../lib/native";
 import { secretDestinationLabel, siteHost } from "../../lib/secret-destination";
 import { secretFieldTraits } from "../../lib/secret-field-traits";
-import { errorText } from "../../lib/user-error";
+import { errorText, secretAnswerErrorText } from "../../lib/user-error";
 import { vaultKindSymbol } from "../../lib/vault";
 import { NativeActionButton } from "../native-action-button";
 import { NativeSymbol } from "../native-symbol";
@@ -99,7 +99,11 @@ export function AskBlock({
       await onAnswer(submitValue);
       if (secretInput) setSaved(true);
     } catch (cause) {
-      setError(secretInput ? t`Could not send answer` : errorText(cause, t`Could not send answer`));
+      setError(
+        secretInput
+          ? secretAnswerErrorText(cause, t`Could not send answer`)
+          : errorText(cause, t`Could not send answer`),
+      );
     } finally {
       setSubmitting(false);
     }

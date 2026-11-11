@@ -84,6 +84,15 @@ export class RemoteMcpTransportError extends Error {
   }
 }
 
+/** The guarded fetch had started sending the request when it failed, so its headers may have
+ * reached the server. A refusal before anything is sent is thrown as itself. */
+export class RemoteRequestSentError extends Error {
+  constructor(message: string, options: { cause?: unknown } = {}) {
+    super(message, options);
+    this.name = "RemoteRequestSentError";
+  }
+}
+
 export class ConnectorRedirectError extends Error {
   constructor() {
     super("Connector redirects are not allowed");
@@ -707,9 +716,12 @@ export function createSafeRemoteFetch(
           );
     } catch (error) {
       const detail = transportFailureDetail(error);
-      throw new Error(`Could not reach ${url.host}${detail ? `: ${detail}` : ""}`, {
-        cause: error,
-      });
+      throw new RemoteRequestSentError(
+        `Could not reach ${url.host}${detail ? `: ${detail}` : ""}`,
+        {
+          cause: error,
+        },
+      );
     }
     if (response.status >= 300 && response.status < 400) {
       cancelResponseBody(response);
@@ -774,13 +786,16 @@ export function createPrivateNetworkFetch(
           );
     } catch (error) {
       const detail = transportFailureDetail(error);
-      throw new Error(`Could not reach ${url.host}${detail ? `: ${detail}` : ""}`, {
-        cause: error,
-      });
+      throw new RemoteRequestSentError(
+        `Could not reach ${url.host}${detail ? `: ${detail}` : ""}`,
+        {
+          cause: error,
+        },
+      );
     }
     if (response.status >= 300 && response.status < 400) {
       cancelResponseBody(response);
-      throw new Error("Private fetch redirects are not allowed");
+      throw new RemoteRequestSentError("Private fetch redirects are not allowed");
     }
     return response;
   };
