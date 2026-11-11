@@ -239,6 +239,7 @@ function world(printed = "") {
           findMany: async ({
             where,
             orderBy,
+            cursor,
             skip = 0,
             take,
           }: {
@@ -247,6 +248,7 @@ function world(printed = "") {
               OR?: Array<Record<string, { contains: string }>>;
             };
             orderBy?: unknown;
+            cursor?: { id: string };
             skip?: number;
             take?: number;
           }) => {
@@ -273,7 +275,9 @@ function world(printed = "") {
               .sort((a, b) => (b.receivedAt as Date).getTime() - (a.receivedAt as Date).getTime());
             if ((orderBy as { receivedAt?: string } | undefined)?.receivedAt === "asc")
               found.reverse();
-            return found.slice(skip, take === undefined ? undefined : skip + take);
+            const start = cursor ? found.findIndex((email) => email.id === cursor.id) : 0;
+            if (start < 0) return [];
+            return found.slice(start + skip, take === undefined ? undefined : start + skip + take);
           },
         },
         deploymentSettings: {
@@ -419,6 +423,7 @@ function world(printed = "") {
   function receives(email: Partial<Row> & { text: string }) {
     emails.push({
       id: `email-${emails.length + 1}`,
+      key: `dkim:signature-${emails.length + 1}`,
       botId: scope.botId,
       fromAddress: "no-reply@example.test",
       fromName: "Example",
@@ -861,7 +866,11 @@ describe("request_secret for a code the site emailed to the bot", () => {
     ]);
     // Claimed for this run as any inbox answer is, and nobody is asked for it.
     expect(run.effects).toContainEqual(
-      expect.objectContaining({ idempotencyKey: "emailed-code:email:email-1", runId: "run-1" }),
+      expect.objectContaining({
+        idempotencyKey: expect.stringMatching(/^emailed-code:email:bot-1:/),
+        request: { emailId: "email-1", site: "example.test" },
+        runId: "run-1",
+      }),
     );
     expect(notified).not.toContainEqual(expect.objectContaining({ kind: "help" }));
   });

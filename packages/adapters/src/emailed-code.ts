@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   AdapterContext,
   BrowserProvider,
@@ -19,8 +20,13 @@ export const EMAILED_CODE_WINDOW_MS = 5 * 60 * 1000;
 export function emailedCodeWindowStart(requestedAt: Date, runStartedAt: Date): Date {
   return new Date(Math.max(requestedAt.getTime() - EMAILED_CODE_WINDOW_MS, runStartedAt.getTime()));
 }
-/** The newest emails looked through for one from the site. */
-const CANDIDATE_EMAILS = 50;
+/** Emails read from the inbox per query while looking for the site's: its sender is encrypted. */
+const EMAIL_BATCH = 50;
+/**
+ * The most emails in the window read for one lookup, the inbox's daily limit for unsolicited
+ * mail: a window is minutes long, so mail from other senders never hides the site's email.
+ */
+export const EMAIL_SEARCH_LIMIT = 500;
 
 /**
  * Whether a run may read its bot's inbox: the owner's own run, never another bot's message, a
@@ -67,7 +73,12 @@ export async function isNonOwnerChatRun(
  * Their status is none a tool's effect has, so nothing replays or reads them as tool calls.
  */
 const EMAILED_CODE_EFFECT = "emailed_code";
-const emailClaimKey = (emailId: string) => `emailed-code:email:${emailId}`;
+/**
+ * The claim on an email is on the message, not the row: the same message delivered again after
+ * its row was deleted (a relay's retry, the bot's delete_email) has the same key and is not new.
+ */
+const emailClaimKey = (botId: string, key: string) =>
+  `emailed-code:email:${botId}:${createHash("sha256").update(key).digest("base64url")}`;
 const runSiteClaimKey = (runId: string, site: string) => `emailed-code:run:${runId}:${site}`;
 const pageSeenKey = (requestId: string) => `emailed-code:page:${requestId}`;
 
@@ -98,7 +109,7 @@ export async function findEmailedCode(
     /** The domain this server's bots send mail from. */
     botEmailDomain: string | undefined;
   },
-): Promise<{ code: string; emailId: string; site: string } | undefined> {
+): Promise<{ code: string; emailId: string; emailKey: string; site: string } | undefined> {
   const site = httpsSite(input.origin);
   if (!site) return undefined;
   const filled = await prisma.externalEffect.findUnique({
@@ -117,34 +128,44 @@ export async function findEmailedCode(
     orderBy: { updatedAt: "desc" },
     select: { updatedAt: true },
   });
-  const emails = await prisma.botEmailMessage.findMany({
-    where: {
-      botId: input.botId,
-      sent: false,
-      verified: true,
-      mailingList: false,
-      receivedAt: { gte: input.after, ...(answered ? { gt: answered.updatedAt } : {}) },
-    },
-    orderBy: [{ receivedAt: "desc" }, { id: "desc" }],
-    take: CANDIDATE_EMAILS,
-    select: { id: true, fromAddress: true, subject: true, text: true },
-  });
-  const fromSite = emails.filter((email) => {
-    const domain = domainOf(email.fromAddress);
-    return domain !== input.botEmailDomain && hostSite(domain) === site;
-  });
+  // The sender is encrypted, so the window is read newest first in batches, each filtered here,
+  // up to EMAIL_SEARCH_LIMIT emails: the limit is on the site's mail, not on everyone's.
+  const fromSite: { id: string; key: string; subject: string; text: string }[] = [];
+  let cursor: string | undefined;
+  for (let read = 0; read < EMAIL_SEARCH_LIMIT; read += EMAIL_BATCH) {
+    const emails = await prisma.botEmailMessage.findMany({
+      where: {
+        botId: input.botId,
+        sent: false,
+        verified: true,
+        mailingList: false,
+        receivedAt: { gte: input.after, ...(answered ? { gt: answered.updatedAt } : {}) },
+      },
+      orderBy: [{ receivedAt: "desc" }, { id: "desc" }],
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      take: Math.min(EMAIL_BATCH, EMAIL_SEARCH_LIMIT - read),
+      select: { id: true, key: true, fromAddress: true, subject: true, text: true },
+    });
+    for (const email of emails) {
+      const domain = domainOf(email.fromAddress);
+      if (domain !== input.botEmailDomain && hostSite(domain) === site) fromSite.push(email);
+    }
+    cursor = emails.at(-1)?.id;
+    if (emails.length < EMAIL_BATCH) break;
+  }
   if (fromSite.length === 0) return undefined;
+  const claimOf = (email: { key: string }) => emailClaimKey(input.botId, email.key);
   const claimed = new Set(
     (
       await prisma.externalEffect.findMany({
-        where: { idempotencyKey: { in: fromSite.map((email) => emailClaimKey(email.id)) } },
+        where: { idempotencyKey: { in: fromSite.map(claimOf) } },
         select: { idempotencyKey: true },
       })
     ).map((effect) => effect.idempotencyKey),
   );
   const candidates = fromSite.flatMap((email) => {
-    const code = claimed.has(emailClaimKey(email.id)) ? undefined : extractOneTimeCode(email);
-    return code ? [{ code, emailId: email.id }] : [];
+    const code = claimed.has(claimOf(email)) ? undefined : extractOneTimeCode(email);
+    return code ? [{ code, emailId: email.id, emailKey: email.key }] : [];
   });
   const [newest] = candidates;
   if (!newest || candidates.some((candidate) => candidate.code !== newest.code)) return undefined;
@@ -161,9 +182,20 @@ export class EmailedCodeTaken extends Error {}
  */
 export async function claimEmailedCode(
   tx: Prisma.TransactionClient,
-  input: { runId: string; spaceId: string; emailId: string; site: string },
+  input: {
+    runId: string;
+    spaceId: string;
+    botId: string;
+    emailId: string;
+    /** The email's message key, the same for every delivery of the message. */
+    emailKey: string;
+    site: string;
+  },
 ): Promise<void> {
-  const keys = [runSiteClaimKey(input.runId, input.site), emailClaimKey(input.emailId)];
+  const keys = [
+    runSiteClaimKey(input.runId, input.site),
+    emailClaimKey(input.botId, input.emailKey),
+  ];
   const { count } = await tx.externalEffect.createMany({
     data: keys.map((idempotencyKey) => ({
       runId: input.runId,
@@ -209,7 +241,9 @@ export async function takeEmailedCode<T>(
     claimEmailedCode(tx, {
       runId: input.runId,
       spaceId: input.spaceId,
+      botId: input.botId,
       emailId: found.emailId,
+      emailKey: found.emailKey,
       site: found.site,
     });
   try {
@@ -311,7 +345,7 @@ export async function answerCodeCardsFromInbox(
     const answers: Array<{
       run: (typeof runs)[number];
       messageId: string;
-      found: { code: string; emailId: string; site: string };
+      found: { code: string; emailId: string; emailKey: string; site: string };
     }> = [];
     for (const run of runs) {
       const nonOwnerChatRun = await isNonOwnerChatRun(deps.prisma, {
@@ -363,7 +397,9 @@ export async function answerCodeCardsFromInbox(
             claimEmailedCode(tx, {
               runId: run.id,
               spaceId: run.spaceId,
+              botId: bot.id,
               emailId: found.emailId,
+              emailKey: found.emailKey,
               site: found.site,
             }),
         });

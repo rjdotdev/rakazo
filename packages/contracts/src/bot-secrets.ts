@@ -334,260 +334,590 @@ const CODE_FORMS = [
   // Capital letters and digits, both.
   "(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*[0-9])[A-Z0-9]{6,8}",
 ];
-const CODE_PATTERN = new RegExp(`${CODE_LEAD}(?:${CODE_FORMS.join("|")})${CODE_TRAIL}`, "gu");
 const YEAR = /^(?:19|20)[0-9]{2}$/;
 
 // Han, kana and Hangul text puts no space between words, so their letters end a word written in
-// another script: "您的code是" names a code. A cue in those scripts has no word edges at all.
+// another script: "您的code是" names a code. A word in those scripts has no word edges at all.
 const NOT_WORD_EDGE = String.raw`(?![${SPACELESS}])[\p{L}\p{M}\p{N}]`;
 const word = (cue: string) =>
   String.raw`(?<!${NOT_WORD_EDGE})(?:${cue})(?!(?![${SPACELESS}])[\p{L}\p{M}])`;
-const stem = (cue: string) => `(?<!${NOT_WORD_EDGE})(?:${cue})`;
+/** A word by its distinctive start, with whatever ending it has. */
+const stem = (cue: string) => String.raw`(?<!${NOT_WORD_EDGE})(?:${cue})[\p{L}\p{M}]*`;
+
 /**
- * Words that name a sign-in code, in the languages the app ships. A short word other words begin
- * or end with (codec, decode, кодек, kodlama) counts only whole, with its own endings; a longer,
- * distinctive one counts as the start of a word, so its every form does.
+ * The words an email may use around a sign-in code, in each language the app ships. A unit of
+ * text (a sentence or a line) yields a code only when it is made of nothing but these words and
+ * the code, in one of the forms readUnit lists. `cue` names a sign-in code (code, passcode, OTP,
+ * PIN); `qualifier` is a word a cue may carry (verification, security, one-time); `filler` is
+ * the little words such a sentence has around them (your, is, enter). Any other word, a number
+ * among them, or a noun that makes the cue name something else (tracking code, code de suivi,
+ * ZIP code, promo code) keeps the unit from yielding anything: the owner's card is the fallback.
+ * Each entry is a regex alternative for a whole word; a `stem` takes any ending.
  */
-const CODE_CUE = new RegExp(
-  [
-    ...[
-      // English, French and Dutch, and German with the compounds that name a sign-in code.
-      "(?:pass|pin|sicherheits|anmelde|zugangs|login|inlog|beveiligings|toegangs)?codes?",
+const LANGUAGES: { cue: string[]; qualifier: string[]; filler: string[] }[] = [
+  {
+    // English, and the words every language's emails borrow.
+    cue: [
+      "codes?",
+      "passcodes?",
       "otp",
-      "pin",
       "2fa",
-      "пин",
-      "पिन",
-      "c[óo]digos?",
-      // Polish and Turkish: kod, kodu, kodem, kody, kodunuz.
-      "kod(?:u(?:n(?:uz)?)?|em|y|ów|zie)?",
-      "код(?:а|у|ом|е|ы|ов)?",
-      "कोड",
+      "one[- ]time (?:password|passcode|pin)",
+      // A bare PIN is a postal code in some countries, so only a sign-in PIN is a cue.
+      "(?:verification|security|login|sign[- ]in|access|temporary) pin",
+      "security key",
     ].map(word),
-    ...[
+    qualifier: [
       "verification",
-      "one[- ]?time",
-      "verifizierung",
-      "bestätigung",
-      "einmal",
+      "verify",
+      "security",
+      "sign[- ]?in",
+      "log[- ]?in",
+      "one[- ]time",
+      "confirmation",
+      "authentication",
+      "two[- ]factor",
+      "access",
+      "temporary",
+      "[4-8][- ]digit",
+      "account",
+      "email",
+      "device",
+    ].map(word),
+    filler: [
+      "your",
+      "the",
+      "this",
+      "is",
+      "a",
+      "an",
+      "here",
+      "here s",
+      "below",
+      "use",
+      "enter",
+      "please",
+      "to",
+      "sign",
+      "log",
+      "in",
+      "for",
+      "continue",
+      "following",
+      "new",
+      "requested",
+      "you",
+      "old",
+      "previous",
+      "has",
+      "expired",
+    ].map(word),
+  },
+  {
+    // German.
+    cue: [
+      "(?:bestätigungs|sicherheits|anmelde|zugangs|verifizierungs|login|einmal|authentifizierungs|best[äa]tigungs)?codes?",
+      "einmalpasswort",
+      "einmalkennwort",
+    ].map(word),
+    qualifier: ["verifizierung", "bestätigung", "einmalig(?:e|er|es)?", "sicherheit"].map(word),
+    filler: [
+      "ihr",
+      "ihre",
+      "dein",
+      "deine",
+      "der",
+      "die",
+      "das",
+      "ist",
+      "lautet",
+      "hier",
+      "bitte",
+      "geben",
+      "sie",
+      "ein",
+      "zum",
+      "zur",
+      "anmelden",
+      "einloggen",
+      "unten",
+      "folgenden",
+      "nutzen",
+      "verwenden",
+    ].map(word),
+  },
+  {
+    // Spanish.
+    cue: ["c[óo]digos?", "contraseña de un solo uso"].map(word),
+    qualifier: [
       "verificaci[óo]n",
+      "seguridad",
+      "acceso",
+      "inicio de sesi[óo]n",
+      "confirmaci[óo]n",
       "un solo uso",
+      "autenticaci[óo]n",
+      "temporal",
+    ].map(word),
+    filler: [
+      "tu",
+      "su",
+      "el",
+      "la",
+      "es",
+      "de",
+      "este",
+      "esta",
+      "aqu[íi]",
+      "usa",
+      "use",
+      "utiliza",
+      "introduce",
+      "ingresa",
+      "para",
+      "iniciar",
+      "sesi[óo]n",
+      "continuaci[óo]n",
+    ].map(word),
+  },
+  {
+    // French.
+    cue: ["codes?", "mot de passe à usage unique"].map(word),
+    qualifier: [
       "v[ée]rification",
+      "s[ée]curit[ée]",
+      "connexion",
+      "confirmation",
       "usage unique",
-      "verificatie",
-      "eenmalig",
-      "weryfikac",
-      "jednorazow",
+      "authentification",
+      "temporaire",
+      "validation",
+      "acc[èe]s",
+    ].map(word),
+    filler: [
+      "votre",
+      "vous",
+      "le",
+      "la",
+      "ce",
+      "est",
+      "de",
+      "d",
+      "voici",
+      "ci-dessous",
+      "utilisez",
+      "saisissez",
+      "entrez",
+      "pour",
+      "connecter",
+      "à",
+    ].map(word),
+  },
+  {
+    // Dutch.
+    cue: [
+      "(?:verificatie|beveiligings|inlog|toegangs|bevestigings|eenmalige)?codes?",
+      "pincodes?",
+      "eenmalig wachtwoord",
+    ].map(word),
+    qualifier: ["verificatie", "beveiliging", "eenmalig(?:e)?", "bevestiging"].map(word),
+    filler: [
+      "je",
+      "jouw",
+      "uw",
+      "de",
+      "het",
+      "is",
+      "dit",
+      "hier",
+      "hieronder",
+      "gebruik",
+      "voer",
+      "in",
+      "om",
+      "te",
+      "loggen",
+      "luidt",
+    ].map(word),
+  },
+  {
+    // Polish.
+    cue: ["kod(?:y|u|em|ów)?", "hasło jednorazowe"].map(word),
+    qualifier: [
+      stem("weryfikac"),
+      stem("jednorazow"),
+      stem("potwierdz"),
+      word("bezpieczeństwa"),
+      word("logowania"),
+      word("dostępu"),
+    ],
+    filler: [
+      "twój",
+      "twoja",
+      "to",
+      "jest",
+      "oto",
+      "poniżej",
+      "wpisz",
+      "użyj",
+      "aby",
+      "się",
+      "zalogować",
+      "zaloguj",
+      "ten",
+      "w",
+    ].map(word),
+  },
+  {
+    // Portuguese.
+    cue: ["c[óo]digos?", "senha de uso [úu]nico"].map(word),
+    qualifier: [
       "verifica[çc][ãa]o",
+      "seguran[çc]a",
+      "acesso",
+      "confirma[çc][ãa]o",
       "uso [úu]nico",
-      "подтвержд",
-      "верификац",
-      "одноразов",
+      "autentica[çc][ãa]o",
+      "tempor[áa]rio",
+    ].map(word),
+    filler: [
+      "seu",
+      "sua",
+      "o",
+      "a",
+      "é",
+      "de",
+      "este",
+      "esta",
+      "aqui",
+      "está",
+      "abaixo",
+      "use",
+      "insira",
+      "digite",
+      "para",
+      "entrar",
+      "fazer",
+      "seguir",
+    ].map(word),
+  },
+  {
+    // Russian.
+    cue: ["код(?:а|у|ом|е|ы|ов)?", "пин-код", "одноразовый пароль"].map(word),
+    qualifier: [
+      stem("подтвержд"),
+      stem("верификац"),
+      stem("одноразов"),
+      stem("безопасност"),
+      stem("авторизац"),
+      word("входа"),
+      word("доступа"),
+    ],
+    filler: [
+      "ваш",
+      "ваша",
+      "ваше",
+      "твой",
+      "это",
+      "для",
+      "в",
+      "вход",
+      "введите",
+      "используйте",
+      "ниже",
+      "чтобы",
+      "войти",
+      "войдите",
+      "с",
+    ].map(word),
+  },
+  {
+    // Turkish.
+    cue: ["kod(?:u|unuz|lar)?", "tek kullanımlık şifre"].map(word),
+    qualifier: [
       "doğrulama",
       "dogrulama",
+      "güvenlik",
+      "giriş",
       "tek kullanımlık",
-      "सत्यापन",
-      "ओटीपी",
-      "एक बार",
-    ].map(stem),
-    // Hebrew joins "the", "of" and other one-letter words to the word itself.
-    String.raw`(?<!${NOT_WORD_EDGE})(?:[הבולמכש]|של)?(?:קוד(?:ים)?(?![\p{L}\p{M}])|אימות|חד[- ]?פעמי)`,
-    "コード",
-    "認証",
-    "ワンタイム",
-    "暗証番号",
-    "코드",
-    "인증",
-    "일회용",
-    "验证",
-    "驗證",
-    "校验码",
-    "一次性",
-    "动态码",
-    "动态密码",
-    "動態密碼",
-  ].join("|"),
-  "giu",
-);
-/**
- * Words that name a number as something other than a sign-in code, in the languages the app
- * ships: postal, promotional, order, tracking, invoice, reference and booking numbers, barcodes.
- * A code cue inside one ("promo code", "クーポンコード") is not a cue.
- */
-const OTHER_NAME = new RegExp(
-  [
-    // "In order to" names nothing.
-    word(
-      String.raw`(?:(?<!\bin )orders?|ordered|tracking|shipment|parcel|invoices?|receipts?|references?|ref|booking|reservation|zip|postal|postcode|promo|discount|coupons?|vouchers?|barcode|plz|cep|pedido|factura|fatura|referencia|referência|reserva|cup[óo]n|cupom|descuento|desconto|commande|facture|r[ée]f[ée]rence|colis|r[ée]servation|factuur|referentie|zending|boeking|kupon|rabat|takip|referans|indirim|rezervasyon)(?:[ -]?(?:codes?|numbers?|nos?\.|nos?|nr\.?|ids?|references?|refs?|nummer|numaras[ıi]))?`,
+      "onay",
+      "erişim",
+    ].map(word),
+    filler: [
+      "sizin",
+      "bu",
+      "için",
+      "yapmak",
+      "aşağıdaki",
+      "girin",
+      "kullanın",
+      "lütfen",
+      "ile",
+    ].map(word),
+  },
+  {
+    // Hindi.
+    cue: ["कोड", "ओटीपी"].map(word),
+    qualifier: ["सत्यापन", "एक बार", "सुरक्षा", "लॉगिन", "पुष्टि"].map(word),
+    filler: ["आपका", "आपकी", "है", "यह", "के", "लिए", "कृपया", "दर्ज", "करें", "का", "में", "नीचे"].map(
+      word,
     ),
-    String.raw`(?<![\p{L}\p{N}])(?:zip|postal|post|promo|promotional|discount|coupon|voucher|gift|area|country|order|tracking|invoice|reference|referral|bar|rabatt|gutschein|kortings)[ -]?codes?`,
-    "c[óo]d(?:e|igo) (?:postal|promo)",
-    "kod (?:pocztowy|rabatowy|promocyjny)",
-    "(?:posta|indirim|promosyon) kodu",
-    "промокод",
-    // Words in these scripts run together, so the compounds that name other codes are listed.
-    "(?:バー|QR|クーポン|プロモーション|割引|ギフト)コード",
-    "(?:바|QR|쿠폰|할인|프로모션) ?코드",
-    stem(
-      "bestel|auftrag|sendung|rechnung|referenz|postleitzahl|gutschein|buchung|seguimiento|rastreamento|rastreio|zamówieni|faktur|przesyłk|rezerwacj|sipari[şs]|заказ|накладн|трек|купон|скидк|индекс|бронирован|ऑर्डर|ट्रैकिंग|इनवॉइस|चालान|कूपन|संदर्भ",
-    ) + String.raw`[\p{L}\p{M}]*`,
-    `(?<!${NOT_WORD_EDGE})(?:[הבולמכש]|של)?(?:הזמנ[הת]|חשבונית|מיקוד|אסמכתא|משלוח|קופון|הנחה)`,
-    "(?:注文|追跡|問い合わせ|請求|郵便|予約|伝票|クーポン)(?:番号)?",
-    "(?:주문|운송장|송장|우편|쿠폰|예약)(?: ?번호)?",
-    "(?:订单|訂單|运单|運單|快递单|發票|发票|邮编|邮政编码|郵遞區號|优惠|優惠|预订|預訂)[号號]?",
-  ].join("|"),
-  "giu",
-);
-/** How far a cue may be from the number it names, on its line or the nearest lines with text. */
-const CODE_CUE_REACH = 40;
+  },
+  {
+    // Hebrew joins "the", "of" and other one-letter words to the word itself.
+    cue: [String.raw`(?:[הבולמכש]|של)?(?:קוד(?:ים)?|סיסמה חד[- ]?פעמית)`].map(word),
+    qualifier: [String.raw`(?:[הבולמכש]|של)?(?:אימות|אבטחה|כניסה|התחברות|אישור|חד[- ]?פעמית?)`].map(
+      word,
+    ),
+    filler: [
+      "שלך",
+      "שלכם",
+      "הוא",
+      "הינו",
+      "זה",
+      "הזן",
+      "הזינו",
+      "הקלד",
+      "את",
+      "כדי",
+      "להתחבר",
+      "להיכנס",
+      "כאן",
+      "להלן",
+      "הבא",
+      "יש",
+      "להזין",
+    ].map(word),
+  },
+  {
+    // Japanese: words run together, so these are matched as written, longest first.
+    cue: ["コード", "認証番号", "暗証番号", "ワンタイムパスワード"],
+    qualifier: ["本人確認", "認証", "確認", "セキュリティ", "ログイン", "ワンタイム", "検証"],
+    filler: [
+      "あなたの",
+      "お客様の",
+      "こちらです",
+      "こちら",
+      "になります",
+      "してください",
+      "以下",
+      "入力",
+      "です",
+      "は",
+      "が",
+      "の",
+      "を",
+      "に",
+      "ご",
+    ],
+  },
+  {
+    // Korean.
+    cue: ["코드", "인증번호", "인증 번호", "일회용 비밀번호"],
+    qualifier: ["인증", "확인", "보안", "로그인", "일회용"],
+    filler: [
+      "귀하의",
+      "고객님의",
+      "회원님의",
+      "입니다",
+      "해주세요",
+      "하세요",
+      "입력",
+      "아래",
+      "다음",
+      "은",
+      "는",
+      "이",
+      "가",
+      "를",
+      "을",
+      "의",
+    ],
+  },
+  {
+    // Chinese, simplified and traditional.
+    cue: ["验证码", "校验码", "动态码", "动态密码", "驗證碼", "校驗碼", "動態密碼"],
+    qualifier: ["验证", "登录", "一次性", "安全", "短信", "驗證", "登入"],
+    filler: [
+      "您的",
+      "你的",
+      "本次",
+      "如下",
+      "下方",
+      "以下",
+      "输入",
+      "輸入",
+      "使用",
+      "是",
+      "为",
+      "為",
+      "请",
+      "請",
+      "的",
+      "此",
+    ],
+  },
+];
 
-/** Whether a subject names a code and no other number, so it names any number no word names. */
-const namesOnlyACode = (text: string) =>
-  text.search(OTHER_NAME) === -1 && text.search(CODE_CUE) !== -1;
+/** What may stand between a cue and its code: a colon, equals sign or dash. */
+const SEPARATOR = String.raw`[:：=\p{Pd}]`;
+
+// The longest alternative first, so a word is read whole ("codes" before "code", "あなたの"
+// before "の"). The scanner takes the first alternative that matches at its position and never
+// backs up, so the order decides, not any backtracking.
+const longestFirst = (alternatives: string[]) =>
+  [...new Set(alternatives)].sort((left, right) => right.length - left.length);
+const sticky = (alternatives: string[]) => new RegExp(`(?:${alternatives.join("|")})`, "yiu");
+/**
+ * The kinds of token a unit may be made of, each as one regex that matches at a position: N a
+ * code, C a cue, Q a qualifier, F a filler, S a separator. A unit holding anything else is not
+ * read. No pattern quantifies a group, so none backtracks into a nested or overlapping loop, and
+ * the scanner runs each at most once per token: reading a unit costs at most a fixed number of
+ * regex executions per character, and a unit is at most ONE_TIME_CODE_UNIT_LIMIT long.
+ */
+export const ONE_TIME_CODE_TOKENS: readonly (readonly [kind: string, pattern: RegExp])[] = [
+  ["N", new RegExp(`${CODE_LEAD}(?:${CODE_FORMS.join("|")})${CODE_TRAIL}`, "yu")],
+  ["C", sticky(longestFirst(LANGUAGES.flatMap((language) => language.cue)))],
+  ["Q", sticky(longestFirst(LANGUAGES.flatMap((language) => language.qualifier)))],
+  ["F", sticky(longestFirst(LANGUAGES.flatMap((language) => language.filler)))],
+  ["S", new RegExp(SEPARATOR, "yu")],
+];
 
 /**
- * The first line with text on it going `step` (-1 up, 1 down) from the line break at `from`
- * (up) or the line starting at `from` (down), as the [start, end) of its text.
+ * A unit of text longer than this yields nothing. A real sentence naming a code is far shorter,
+ * and the cap bounds what reading one unit can cost.
  */
-function nearestLineWithText(
-  text: string,
-  from: number,
-  step: -1 | 1,
-): [number, number] | undefined {
-  let at = from;
-  while (step < 0 ? at > 0 : at < text.length) {
-    const start = step < 0 ? text.lastIndexOf("\n", at - 1) + 1 : at;
-    const found = text.indexOf("\n", start);
-    const end = step < 0 ? at : found === -1 ? text.length : found;
-    const line = text.slice(start, end);
-    if (line.trim()) {
-      const lead = line.length - line.trimStart().length;
-      return [start + lead, start + lead + line.trim().length];
+export const ONE_TIME_CODE_UNIT_LIMIT = 200;
+
+/**
+ * A character that ends a unit inside a line: sentence and clause punctuation (Chinese, Japanese
+ * and Hindi marks too), a bracket, a quote or a pipe. One character, so splitting never backs up;
+ * "1,234" or "4.8.2" splits into pieces, none of which is a code, as none was.
+ */
+const UNIT_BREAK = /[.!?;,()[\]{}"“”«»|。！？।；，、]/u;
+
+type Unit = {
+  text: string;
+  /** The unit is all its line holds, so a line of nothing but a code reads as one. */
+  wholeLine: boolean;
+  /** The unit ends its line (or is the subject), so the next unit is the line below it. */
+  endsLine: boolean;
+};
+
+/**
+ * The sentences and lines of `text` in order, each trimmed with its spaces collapsed, blank ones
+ * dropped. Apostrophes read as spaces ("here's", "d'accès") so the words around them stand whole.
+ */
+function units(text: string): Unit[] {
+  const result: Unit[] = [];
+  for (const line of text.split("\n")) {
+    const parts = line
+      .split(UNIT_BREAK)
+      .map((part) => part.replace(/['’]/gu, " ").replace(/\s+/gu, " ").trim())
+      .filter(Boolean);
+    for (const [index, part] of parts.entries()) {
+      result.push({
+        text: part,
+        wholeLine: parts.length === 1,
+        endsLine: index === parts.length - 1,
+      });
     }
-    at = step < 0 ? start - 1 : end + 1;
   }
-  return undefined;
+  return result;
 }
 
-/** What may stand between a number and a word that touches it: spaces, and one ":", "#" or dash. */
-const TOUCHING = /^\s*[:#\p{Pd}]?\s*$/u;
-
 /**
- * Whether the words nearest the number at `start`..`end` of `text` name it as a code, looking
- * in `from`..`start` and `end`..`to`. True when the nearest is a sign-in cue; false when it names
- * the number as something else, or such a word ties with a cue or touches the number; undefined
- * with neither. A word naming something else that touches the number before or after this one
- * (`previous` ends, `next` starts) and not this one names that number instead.
+ * The token kinds of a unit as a string ("FCSN" for "Your code: 482913") and the code tokens as
+ * written, or undefined when the unit holds anything that is not a known word, a code or a
+ * separator, or is longer than ONE_TIME_CODE_UNIT_LIMIT.
  */
-function nearestWordIsCue(
-  text: string,
-  [from, start, end, to]: [number, number, number, number],
-  [previous, next]: [number, number],
-) {
-  // A little text around the reach, so a word cut at its edge still sees what comes before it.
-  const offset = Math.max(0, from - 8);
-  const near = text.slice(offset, to + 8);
-  const words: { cue: boolean; gap: string }[] = [];
-  const masked = near.replace(OTHER_NAME, (name) => " ".repeat(name.length));
-  for (const [pattern, source, cue] of [
-    [OTHER_NAME, near, false],
-    [CODE_CUE, masked, true],
-  ] as const) {
-    for (const match of source.matchAll(pattern)) {
-      const at = offset + match.index;
-      const after = at + match[0].length;
-      const [gap, beyond] =
-        at >= from && after <= start
-          ? [
-              text.slice(after, start),
-              previous >= 0 && at >= previous ? text.slice(previous, at) : undefined,
-            ]
-          : at >= end && after <= to
-            ? [
-                text.slice(end, at),
-                next < Infinity && after <= next ? text.slice(after, next) : undefined,
-              ]
-            : [];
-      if (gap === undefined) continue;
-      if (!cue && beyond !== undefined && TOUCHING.test(beyond) && !TOUCHING.test(gap)) continue;
-      words.push({ cue, gap });
+function scanUnit(unit: string): { kinds: string; codes: string[] } | undefined {
+  if (unit.length > ONE_TIME_CODE_UNIT_LIMIT) return undefined;
+  let kinds = "";
+  const codes: string[] = [];
+  let at = 0;
+  while (at < unit.length) {
+    if (unit[at] === " ") {
+      at++;
+      continue;
     }
+    let token: [string, string] | undefined;
+    for (const [kind, pattern] of ONE_TIME_CODE_TOKENS) {
+      pattern.lastIndex = at;
+      const match = pattern.exec(unit);
+      if (match?.[0]) {
+        token = [kind, match[0]];
+        break;
+      }
+    }
+    if (!token) return undefined;
+    const [kind, written] = token;
+    kinds += kind;
+    if (kind === "N") codes.push(written);
+    at += written.length;
   }
-  if (words.some((word) => !word.cue && TOUCHING.test(word.gap))) return false;
-  const nearest = Math.min(...words.map((word) => word.gap.length));
-  const closest = words.filter((word) => word.gap.length === nearest);
-  return closest.length ? closest.every((word) => word.cue) : undefined;
+  return { kinds, codes };
 }
 
+/** A phrase naming a code: cues, qualifiers and fillers in any order, with a cue among them. */
+const namesCode = (kinds: string) => /^[FQC]*$/.test(kinds) && kinds.includes("C");
+/** The words after a code in "<code> is your <cue>": one or more of the same, with a cue. */
+const trailsCue = (kinds: string) => kinds.length > 0 && namesCode(kinds);
+/** A code with nothing after it but fillers and qualifiers ("to sign in"). */
+const trailsNothing = (kinds: string) => /^[FQ]*$/.test(kinds);
+const withoutSeparator = (kinds: string, side: "start" | "end") =>
+  side === "end" ? kinds.replace(/S$/, "") : kinds.replace(/^S/, "");
+
 /**
- * Whether the number at `start`..`end` of `text` reads as a code, by the words nearest it
- * (nearestWordIsCue): on its line, or, on a line holding nothing else, on the nearest lines with
- * text above and below it. A word never reaches past another number (`after`..`before`). With no
- * such word, a number on a line of its own, or `anywhere` in the text, counts when `cued`.
+ * Whether a unit's token kinds take one of the forms that yield a code: "<cue>[ is| :| =| -]
+ * <code>" or "<code> is your [...] <cue>", with exactly one code. Any word may carry a qualifier
+ * or another cue ("one-time PIN code"); between cue and code only fillers, qualifiers and one
+ * separator may stand; after a code in the first form only fillers and qualifiers.
  */
-function cuedCode(
-  text: string,
-  [start, end]: [number, number],
-  [after, before]: [number, number],
-  cued: boolean,
-  anywhere: boolean,
-): boolean {
-  // Only the spaces next to the number and the reach are read, so a long line costs no more.
-  let lineStart = start;
-  while (lineStart > 0 && /[^\S\n]/.test(text[lineStart - 1] ?? "")) lineStart--;
-  let lineEnd = end;
-  while (lineEnd < text.length && /[^\S\n]/.test(text[lineEnd] ?? "")) lineEnd++;
-  const alone =
-    (lineStart === 0 || text[lineStart - 1] === "\n") &&
-    (lineEnd === text.length || text[lineEnd] === "\n");
-  const back = text.slice(Math.max(0, start - CODE_CUE_REACH), start);
-  const ahead = text.slice(end, end + CODE_CUE_REACH);
-  const breakAhead = ahead.indexOf("\n");
-  const above: [number, number] | undefined = alone
-    ? nearestLineWithText(text, lineStart - 1, -1)
-    : [start - back.length + back.lastIndexOf("\n") + 1, start];
-  const below: [number, number] | undefined = alone
-    ? nearestLineWithText(text, lineEnd + 1, 1)
-    : [end, end + (breakAhead === -1 ? ahead.length : breakAhead)];
-  const from = Math.max(after, above ? Math.max(above[0], above[1] - CODE_CUE_REACH) : start);
-  const to = Math.min(before, below ? Math.min(below[1], below[0] + CODE_CUE_REACH) : end);
+function yieldsCode(kinds: string): boolean {
+  const at = kinds.indexOf("N");
+  if (at < 0 || at !== kinds.lastIndexOf("N")) return false;
+  const before = kinds.slice(0, at);
+  const after = kinds.slice(at + 1);
   return (
-    nearestWordIsCue(text, [from, start, end, to], [after, before]) ?? ((alone || anywhere) && cued)
+    (namesCode(withoutSeparator(before, "end")) && trailsNothing(after)) ||
+    (before === "" && trailsCue(withoutSeparator(after, "start")))
   );
 }
 
 /**
- * The one-time code an email carries, as it would be typed: digit groups joined. A number counts
- * only when the nearest word naming it is a code cue (cuedCode), or, in the subject or on a line
- * of its own, when no word names it and the subject names a code. Nothing unless the email holds
- * exactly one such code, the same one wherever it appears, so an email that also shows another
- * number by a cue gives none rather than a guess; and nothing unless that code stands alone
- * (oneTimeCodeStandsAlone), as a shorter one could not be hidden.
+ * The code a unit writes in a form yieldsCode accepts, or, when the unit only names a code and
+ * ends its line, the code the line below holds alone. Undefined when the unit takes no such form.
+ */
+function readUnit(unit: Unit, below: Unit | undefined): string | undefined {
+  const scanned = scanUnit(unit.text);
+  if (!scanned) return undefined;
+  if (yieldsCode(scanned.kinds)) return scanned.codes[0];
+  const cueOnly = namesCode(withoutSeparator(scanned.kinds, "end"));
+  if (!cueOnly || !unit.endsLine || !below?.wholeLine) return undefined;
+  const next = scanUnit(below.text);
+  return next?.kinds === "N" ? next.codes[0] : undefined;
+}
+
+/**
+ * The one-time code an email carries, as it would be typed: digit groups joined. The subject and
+ * each sentence or line of the text is read on its own (readUnit), and yields a code only when it
+ * is written in one of a few fixed forms with the words LANGUAGES lists and nothing else: "Your
+ * verification code is 482913", "Code: 482913", "482913 is your sign-in code", or "Your code:"
+ * on a line with the code alone on the next; the subject counts as the line above the text.
+ * Anything else, an order or tracking number near a code word included, yields nothing. Nothing
+ * unless the email holds exactly one such code, the same one wherever it appears, so an email
+ * that also writes another number as a code gives none rather than a guess; and nothing unless
+ * that code stands alone (oneTimeCodeStandsAlone), as a shorter one could not be hidden.
  */
 export function extractOneTimeCode(email: { subject: string; text: string }): string | undefined {
   const codes = new Set<string>();
-  const subjectCued = namesOnlyACode(email.subject);
-  for (const [text, inSubject] of [
-    [email.subject, true],
-    [email.text, false],
-  ] as const) {
-    const matches = [...text.matchAll(CODE_PATTERN)];
-    for (const [index, match] of matches.entries()) {
-      const written = match[0];
-      const code = normalizeOneTimeCode(written.replace(/[ -]/g, ""));
-      if (!code || YEAR.test(code) || !oneTimeCodeWritings(code).includes(written)) continue;
-      const previous = matches[index - 1];
-      const next = matches[index + 1];
-      const cued = cuedCode(
-        text,
-        [match.index, match.index + written.length],
-        [previous ? previous.index + previous[0].length : -1, next ? next.index : Infinity],
-        subjectCued,
-        // A subject is short: a cue anywhere in it names a number no word names.
-        inSubject,
-      );
-      if (cued) codes.add(code);
-    }
+  const all = [...units(email.subject), ...units(email.text)];
+  for (const [index, unit] of all.entries()) {
+    const written = readUnit(unit, all[index + 1]);
+    if (written === undefined) continue;
+    const code = normalizeOneTimeCode(written.replace(/[ -]/g, ""));
+    if (code && !YEAR.test(code) && oneTimeCodeWritings(code).includes(written)) codes.add(code);
   }
   const [code] = codes;
   return codes.size === 1 && code && oneTimeCodeStandsAlone(code) ? code : undefined;

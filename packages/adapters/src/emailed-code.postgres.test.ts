@@ -89,14 +89,14 @@ postgres("emailed code claims (PostgreSQL)", () => {
     }
   });
 
-  async function receive(code: string) {
+  async function receive(code: string, from = "no-reply@example.test") {
     return system(() =>
       prisma.botEmailMessage.create({
         data: {
           spaceId,
           botId,
           key: `<${randomUUID()}@example.test>`,
-          fromAddress: "no-reply@example.test",
+          fromAddress: from,
           fromName: "Example",
           verified: true,
           to: ["signer@bots.test"],
@@ -104,16 +104,23 @@ postgres("emailed code claims (PostgreSQL)", () => {
           subject: "Your sign-in code",
           text: `Your verification code is ${code}.`,
         },
-        select: { id: true },
+        select: { id: true, key: true },
       }),
     );
   }
 
   /** Claim as a run keeping the code does, in its own transaction: false when taken. */
-  const claimFor = (runId: string, emailId: string) =>
+  const claimFor = (runId: string, email: { id: string; key: string }) =>
     system(() =>
       prisma.$transaction((tx) =>
-        claimEmailedCode(tx, { runId, spaceId, emailId, site: "example.test" }),
+        claimEmailedCode(tx, {
+          runId,
+          spaceId,
+          botId,
+          emailId: email.id,
+          emailKey: email.key,
+          site: "example.test",
+        }),
       ),
     ).then(
       () => true,
@@ -132,6 +139,15 @@ postgres("emailed code claims (PostgreSQL)", () => {
     botEmailDomain: "bots.test",
   });
 
+  it("finds the site's email under sixty newer signed emails from other senders", async () => {
+    const email = await receive("317244");
+    for (let index = 0; index < 60; index += 1)
+      await receive(String(100_000 + index), `news-${index}@elsewhere.test`);
+    const found = await system(() => findEmailedCode(prisma, lookup(runs[0]!)));
+    expect(found).toMatchObject({ code: "317244", emailId: email.id });
+    await system(() => prisma.botEmailMessage.deleteMany({ where: { botId } }));
+  });
+
   it("gives an email's code to one of two runs that claim it at once", async () => {
     const email = await receive("482913");
     const [runA, runB] = runs as [string, string];
@@ -140,7 +156,7 @@ postgres("emailed code claims (PostgreSQL)", () => {
       Promise.all([findEmailedCode(prisma, lookup(runA)), findEmailedCode(prisma, lookup(runB))]),
     );
     expect(found).toMatchObject([{ emailId: email.id }, { emailId: email.id }]);
-    const claimed = await Promise.all([runA, runB].map((runId) => claimFor(runId, email.id)));
+    const claimed = await Promise.all([runA, runB].map((runId) => claimFor(runId, email)));
     expect(claimed.filter(Boolean)).toHaveLength(1);
     winner = claimed[0] ? runA : runB;
     // Taken: neither run finds it again.
@@ -148,7 +164,10 @@ postgres("emailed code claims (PostgreSQL)", () => {
       expect(await system(() => findEmailedCode(prisma, lookup(runId)))).toBeUndefined();
     const effects = await system(() =>
       prisma.externalEffect.findMany({
-        where: { idempotencyKey: `emailed-code:email:${email.id}` },
+        where: {
+          idempotencyKey: { startsWith: "emailed-code:email:" },
+          request: { path: ["emailId"], equals: email.id },
+        },
         select: { runId: true, kind: true, status: true },
       }),
     );
@@ -157,7 +176,7 @@ postgres("emailed code claims (PostgreSQL)", () => {
 
   it("takes one emailed code per site in a run, and leaves the next email for another run", async () => {
     const email = await receive("731905");
-    const claim = (runId: string) => claimFor(runId, email.id);
+    const claim = (runId: string) => claimFor(runId, email);
     // The run that won above already took this site's code.
     expect(await claim(winner)).toBe(false);
     expect(
@@ -170,12 +189,16 @@ postgres("emailed code claims (PostgreSQL)", () => {
     expect(await claim(loser)).toBe(true);
   });
 
-  /** The runs that took the email's code. */
+  /** The runs that took the email's code: one claim per run and site, one per message. */
   const takers = (emailId: string) =>
     system(async () =>
       (
         await prisma.externalEffect.findMany({
-          where: { idempotencyKey: `emailed-code:email:${emailId}` },
+          where: {
+            kind: "emailed_code",
+            idempotencyKey: { startsWith: "emailed-code:email:" },
+            request: { path: ["emailId"], equals: emailId },
+          },
           select: { runId: true },
         })
       ).map((effect) => effect.runId),

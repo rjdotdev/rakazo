@@ -1,9 +1,12 @@
+import { createHash } from "node:crypto";
 import type { PrismaClient } from "@rakazo/db";
 import { describe, expect, it, vi } from "vitest";
 import { answerCodeCardsFromInbox, EMAILED_CODE_WINDOW_MS } from "./emailed-code.js";
 
 const ORIGIN = "https://login.example.test";
 const CODE = "482913";
+/** The claim on the test email's message, which a copy delivered again shares. */
+const EMAIL_CLAIM = `emailed-code:email:bot-1:${createHash("sha256").update("dkim:signature-1").digest("base64url")}`;
 const bot = { id: "bot-1", userId: "user-1" };
 const ago = (ms: number) => new Date(Date.now() - ms);
 
@@ -53,7 +56,10 @@ function inbox(
   const prisma: Record<string, unknown> = {
     run: {
       findMany: vi.fn(async ({ where }: { where: Row }) =>
-        runs.filter((run) => !where.id || run.id === where.id),
+        runs.filter(
+          (run) =>
+            (!where.id || run.id === where.id) && (!where.status || run.status === where.status),
+        ),
       ),
     },
     message: {
@@ -99,12 +105,29 @@ function inbox(
       }
     },
     botEmailMessage: {
-      findMany: async ({ where }: { where: { receivedAt: { gte: Date; gt?: Date } } }) =>
-        emails.filter(
-          (email) =>
-            (email.receivedAt as Date) >= where.receivedAt.gte &&
-            (!where.receivedAt.gt || (email.receivedAt as Date) > where.receivedAt.gt),
-        ),
+      // Newest first, paged by cursor and take, as the database does it.
+      findMany: async ({
+        where,
+        cursor,
+        skip,
+        take,
+      }: {
+        where: { receivedAt: { gte: Date; gt?: Date } };
+        cursor?: { id: string };
+        skip?: number;
+        take?: number;
+      }) => {
+        const inWindow = emails
+          .filter(
+            (email) =>
+              (email.receivedAt as Date) >= where.receivedAt.gte &&
+              (!where.receivedAt.gt || (email.receivedAt as Date) > where.receivedAt.gt),
+          )
+          .sort((a, b) => (b.receivedAt as Date).getTime() - (a.receivedAt as Date).getTime());
+        const start = cursor ? inWindow.findIndex((email) => email.id === cursor.id) : 0;
+        if (start < 0) return [];
+        return inWindow.slice(start + (skip ?? 0), start + (skip ?? 0) + (take ?? inWindow.length));
+      },
     },
     externalConversation: { findUnique: async () => null },
   };
@@ -131,6 +154,7 @@ function inbox(
 function waitingRun(overrides: Row = {}): Row {
   return {
     id: "run-1",
+    status: "waiting_input",
     spaceId: "space-1",
     threadId: "thread-1",
     userId: "user-1",
@@ -156,6 +180,7 @@ function codeCard(origin = ORIGIN): Row {
 function codeEmail(overrides: Row = {}): Row {
   return {
     id: "email-1",
+    key: "dkim:signature-1",
     fromAddress: "no-reply@example.test",
     subject: "Your sign-in code",
     text: `Your verification code is ${CODE}.`,
@@ -271,20 +296,52 @@ describe("a code emailed to the bot while its run waits on the card", () => {
   it("answers with an email once, claimed for the run it answered", async () => {
     const { deliver, answerRunInput, effects } = inbox();
     await expect(deliver()).resolves.toBe(1);
-    expect(effects.get("emailed-code:email:email-1")).toMatchObject({
-      runId: "run-1",
-      kind: "emailed_code",
-    });
+    expect(effects.get(EMAIL_CLAIM)).toMatchObject({ runId: "run-1", kind: "emailed_code" });
     await expect(deliver()).resolves.toBe(0);
     expect(answerRunInput).toHaveBeenCalledOnce();
   });
 
   it("never answers with an email another run claimed", async () => {
     const { deliver, answerRunInput } = inbox({
-      effects: { "emailed-code:email:email-1": { runId: "run-9" } },
+      effects: { [EMAIL_CLAIM]: { runId: "run-9" } },
     });
     await deliver();
     expect(answerRunInput).not.toHaveBeenCalled();
+  });
+
+  it("answers once with an email that was deleted and delivered again", async () => {
+    const emails = [codeEmail()];
+    const later = waitingRun({ id: "run-2", threadId: "thread-2", status: "running" });
+    const { deliver, answerRunInput } = inbox({
+      runs: [waitingRun(), later],
+      emails,
+      cards: { "run-1": codeCard(), "run-2": codeCard() },
+    });
+    await expect(deliver()).resolves.toBe(1);
+    // The bot deleted the email; the sender's relay delivers the same signed message again, and
+    // a later run asks for a code from the same site.
+    emails.splice(0, 1, codeEmail({ id: "email-2", receivedAt: new Date() }));
+    later.status = "waiting_input";
+    await expect(deliver()).resolves.toBe(0);
+    expect(answerRunInput).toHaveBeenCalledOnce();
+  });
+
+  it("finds the site's email under sixty newer signed emails from other senders", async () => {
+    const emails = [
+      codeEmail({ receivedAt: ago(60 * 1000) }),
+      ...Array.from({ length: 60 }, (_, index) =>
+        codeEmail({
+          id: `other-${index}`,
+          key: `dkim:other-${index}`,
+          fromAddress: `news-${index}@elsewhere.test`,
+          text: `Newsletter ${index}: your code is ${100_000 + index}.`,
+          receivedAt: ago(1000 * (59 - index)),
+        }),
+      ),
+    ];
+    const { deliver, answerRunInput } = inbox({ emails });
+    await expect(deliver()).resolves.toBe(1);
+    expect(answerRunInput).toHaveBeenCalledOnce();
   });
 
   it("answers a run's card for a site from the inbox only once in that run", async () => {
