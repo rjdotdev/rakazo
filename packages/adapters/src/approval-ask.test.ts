@@ -106,7 +106,7 @@ it("shows the full instruction replacement as a diff with Apply and Dismiss", ()
   );
   expect(block).toMatchObject({
     kind: "ask",
-    detail: "- Draft only\n+ Draft only\n+ Ask before sending",
+    detail: "  Draft only\n+ Ask before sending",
     instructionUpdate: {
       botId: "bot-1",
       before: "Draft only",
