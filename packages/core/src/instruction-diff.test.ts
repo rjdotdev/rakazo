@@ -64,6 +64,13 @@ describe("instructionUpdateDiff", () => {
     expect(instructionUpdateDiff("Keep it.", "Keep it.")).toBe("  Keep it.");
   });
 
+  it("shows a long unchanged text whole", () => {
+    const text = numbered(20_000).join("\n");
+    const diff = instructionUpdateDiff(text, text).split("\n");
+    expect(diff).toHaveLength(20_000);
+    expect(diff.every((line) => line.startsWith("  "))).toBe(true);
+  });
+
   it("still lists every removed and added line for a very large rewrite", () => {
     const before = numbered(3000);
     const after = before.map((line) => `${line} edited`);

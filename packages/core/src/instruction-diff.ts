@@ -79,6 +79,7 @@ export function instructionUpdateDiff(before: string, after: string): string {
       shown[near] = true;
     }
   });
+  const showAll = !shown.includes(true);
   const out: string[] = [];
   let hidden = 0;
   const flush = () => {
@@ -86,7 +87,7 @@ export function instructionUpdateDiff(before: string, after: string): string {
     hidden = 0;
   };
   lines.forEach((line, index) => {
-    if (shown[index] || !shown.includes(true)) {
+    if (showAll || shown[index]) {
       flush();
       out.push(`${line.sign} ${line.text}`);
     } else {
