@@ -64,6 +64,12 @@ describe("instructionUpdateDiff", () => {
     expect(instructionUpdateDiff("Keep it.", "Keep it.")).toBe("  Keep it.");
   });
 
+  it("lists every old line as removed when the new text is empty", () => {
+    expect(instructionUpdateDiff("Draft only\nAsk first", "")).toBe(
+      "- Draft only\n- Ask first\n+ ",
+    );
+  });
+
   it("shows a long unchanged text whole", () => {
     const text = numbered(20_000).join("\n");
     const diff = instructionUpdateDiff(text, text).split("\n");
