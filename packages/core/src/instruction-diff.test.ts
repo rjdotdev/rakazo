@@ -26,6 +26,28 @@ describe("instructionUpdateDiff", () => {
     );
   });
 
+  it("shows a single unchanged line instead of a marker for it", () => {
+    const before = numbered(9);
+    const after = [...before];
+    after[1] = "line 2 changed";
+    after[7] = "line 8 changed";
+    expect(instructionUpdateDiff(before.join("\n"), after.join("\n"))).toBe(
+      [
+        "  line 1",
+        "- line 2",
+        "+ line 2 changed",
+        "  line 3",
+        "  line 4",
+        "  line 5",
+        "  line 6",
+        "  line 7",
+        "- line 8",
+        "+ line 8 changed",
+        "  line 9",
+      ].join("\n"),
+    );
+  });
+
   it("shows an appended line without repeating the old text", () => {
     expect(instructionUpdateDiff("Draft only", "Draft only\nAsk before sending")).toBe(
       "  Draft only\n+ Ask before sending",

@@ -91,7 +91,7 @@ describe("buildApprovalAskBlock", () => {
   });
 });
 
-it("shows the full instruction replacement as a diff with Apply and Dismiss", () => {
+it("shows the instruction change as a line diff with Apply and Dismiss", () => {
   const block = buildApprovalAskBlock(
     "effect-1",
     "update_bot",

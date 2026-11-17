@@ -81,17 +81,20 @@ export function instructionUpdateDiff(before: string, after: string): string {
   });
   const showAll = !shown.includes(true);
   const out: string[] = [];
-  let hidden = 0;
+  let hidden: string[] = [];
+  // A single unchanged line takes no more room than a marker would, so it is shown instead.
   const flush = () => {
-    if (hidden) out.push(`… ${hidden} unchanged ${hidden === 1 ? "line" : "lines"}`);
-    hidden = 0;
+    if (hidden.length > 1) out.push(`… ${hidden.length} unchanged lines`);
+    else out.push(...hidden);
+    hidden = [];
   };
   lines.forEach((line, index) => {
+    const text = `${line.sign} ${line.text}`;
     if (showAll || shown[index]) {
       flush();
-      out.push(`${line.sign} ${line.text}`);
+      out.push(text);
     } else {
-      hidden++;
+      hidden.push(text);
     }
   });
   flush();
