@@ -56,8 +56,10 @@ export function stuckWorkAgeMs(updatedAt: Date | string, now: Date): number {
   return now.getTime() - at;
 }
 
-/** How long a run in this status may sit before the first reminder or cancellation. */
+/** How long a run in this status may sit before the first reminder or cancellation.
+ *  A takeover wait is due only at its own stop: it never reminds, whatever the reminder setting. */
 export function stuckWorkDueAfterMs(status: StuckWorkStatus): number {
+  if (status === "waiting_takeover") return TAKEOVER_WAIT_EXPIRE_AFTER_MS;
   return Math.min(stuckWorkNotifyAfterMs(), stuckWorkExpireAfterMs(status));
 }
 
@@ -68,7 +70,12 @@ export function stuckWorkAction(input: {
   alreadyNotified: boolean;
 }): StuckWorkAction {
   if (input.ageMs >= stuckWorkExpireAfterMs(input.status)) return "expire";
-  if (input.ageMs >= stuckWorkNotifyAfterMs() && !input.alreadyNotified) return "notify";
+  if (
+    input.status !== "waiting_takeover" &&
+    input.ageMs >= stuckWorkNotifyAfterMs() &&
+    !input.alreadyNotified
+  )
+    return "notify";
   return "none";
 }
 

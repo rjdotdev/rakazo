@@ -83,6 +83,19 @@ describe("stuck work timeouts from the environment", () => {
     expect(stuckWorkDueAfterMs("waiting_takeover")).toBe(TAKEOVER_WAIT_EXPIRE_AFTER_MS);
   });
 
+  it("never reminds a takeover wait, whatever the reminder setting", () => {
+    vi.stubEnv("STUCK_WORK_NOTIFY_AFTER_MS", "60000");
+    const action = (ageMs: number) =>
+      stuckWorkAction({ status: "waiting_takeover", ageMs, alreadyNotified: false });
+    expect(stuckWorkDueAfterMs("waiting_takeover")).toBe(TAKEOVER_WAIT_EXPIRE_AFTER_MS);
+    expect(action(60_000)).toBe("none");
+    expect(action(TAKEOVER_WAIT_EXPIRE_AFTER_MS - 1)).toBe("none");
+    expect(action(TAKEOVER_WAIT_EXPIRE_AFTER_MS)).toBe("expire");
+    expect(stuckWorkAction({ status: "queued", ageMs: 60_000, alreadyNotified: false })).toBe(
+      "notify",
+    );
+  });
+
   it("can end a wait before the default reminder would go out", () => {
     vi.stubEnv("STUCK_WORK_EXPIRE_AFTER_MS", String(2 * HOUR));
     expect(stuckWorkDueAfterMs("queued")).toBe(2 * HOUR);
